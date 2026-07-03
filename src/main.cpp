@@ -25,7 +25,7 @@ static const char* NTP_1   = "kr.pool.ntp.org";
 static const char* NTP_2   = "time.google.com";
 static const char* NTP_3   = "pool.ntp.org";
 static const char* AP_NAME = "CYD-Clock";        // 최초 WiFi 설정용 핫스팟 이름
-static const uint8_t CLOCK_ROTATION = 1;         // 가로 방향. 화면이 180도 뒤집히면 3으로 변경.
+static const uint8_t CLOCK_ROTATION = 6;         // TPM408/CYD v2 가로 방향. 뒤집히면 4로 변경.
 
 // 화면 색이 반전되어 보이는 CYD 변종(배경이 하얗게 나옴)이라면 true 로 바꾸세요.
 #define PANEL_INVERT false
@@ -68,21 +68,23 @@ public:
       _bus.config(cfg);
       _panel.setBus(&_bus);
     }
-    { // 패널: CYD ILI9341 변종은 LovyanGFX 기준 offset_rotation=2가 안정적입니다.
+    { // 패널: TPM408/CYD v2는 ILI9341 호환 초기화 + 320x240 네이티브 레이아웃입니다.
       auto cfg = _panel.config();
       cfg.pin_cs           = 15;
       cfg.pin_rst          = -1;
       cfg.pin_busy         = -1;
-      cfg.panel_width      = 240;
-      cfg.panel_height     = 320;
+      cfg.memory_width     = 320;
+      cfg.memory_height    = 240;
+      cfg.panel_width      = 320;
+      cfg.panel_height     = 240;
       cfg.offset_x         = 0;
       cfg.offset_y         = 0;
-      cfg.offset_rotation  = 2;
+      cfg.offset_rotation  = 0;
       cfg.dummy_read_pixel = 8;
       cfg.dummy_read_bits  = 1;
       cfg.readable         = true;
       cfg.invert           = PANEL_INVERT;
-      cfg.rgb_order        = false;
+      cfg.rgb_order        = true;
       cfg.dlen_16bit       = false;
       cfg.bus_shared       = false;
       _panel.config(cfg);
@@ -104,7 +106,7 @@ public:
       cfg.y_max           = 200;
       cfg.pin_int         = -1;
       cfg.bus_shared      = false;
-      cfg.offset_rotation = 0;
+      cfg.offset_rotation = 2;
       cfg.spi_host        = -1;          // software SPI: CYD 변종에서 가장 호환성이 좋음
       cfg.freq            = 1000000;
       cfg.pin_sclk        = 25;
@@ -153,8 +155,10 @@ static void drawWifiIcon(GFX& g, int x, int y, uint32_t col) {
 }
 
 static void setLandscapeRotation() {
+  const uint8_t rotationFlags = CLOCK_ROTATION & 4;
+  const uint8_t rotationBase = CLOCK_ROTATION & 3;
   for (uint8_t i = 0; i < 4; ++i) {
-    uint8_t rotation = (CLOCK_ROTATION + i) & 3;
+    uint8_t rotation = rotationFlags | ((rotationBase + i) & 3);
     tft.setRotation(rotation);
     if (tft.width() >= tft.height()) break;
   }

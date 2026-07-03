@@ -53,7 +53,7 @@ python -m esptool --chip esp32 merge_bin -o docs/firmware-merged.bin ^
 |---|---|
 | `TZ_INFO` | 시간대 (기본 `KST-9`) |
 | `AP_NAME` | WiFi 설정용 핫스팟 이름 |
-| `CLOCK_ROTATION` | 화면 방향 (기본 `1`, 180도 뒤집히면 `3`) |
+| `CLOCK_ROTATION` | 화면 방향 (기본 `6`, 180도 뒤집히면 `4`) |
 | `PANEL_INVERT` | 화면 색이 반전되어 보이는 CYD 변종이면 `true` |
 | `LDR_*`, `BRIGHTNESS_*` | 자동 밝기 감도/범위 |
 
