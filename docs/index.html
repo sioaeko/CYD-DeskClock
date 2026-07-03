@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CYD 데스크 시계 — 웹 플래셔</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root {
+    --bg: #05070c;
+    --surface: rgba(255, 255, 255, .025);
+    --edge: rgba(255, 255, 255, .07);
+    --edge-hover: rgba(96, 214, 255, .35);
+    --text: #eef2f7;
+    --muted: #99a3b3;
+    --faint: #5c6572;
+    --accent: #38d0ff;
+    --accent-deep: #00a8e8;
+    --warn: #ffd65a;
+    --radius: 20px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  /* 은은한 배경: 상단 글로우 + 그리드 */
+  .backdrop { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+  .backdrop::before {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(720px 420px at 50% -80px, rgba(56, 208, 255, .13), transparent 70%),
+      radial-gradient(900px 500px at 80% 10%, rgba(120, 90, 255, .05), transparent 70%);
+  }
+  .backdrop::after {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+    background-size: 48px 48px;
+    -webkit-mask-image: radial-gradient(640px 420px at 50% 0%, #000 30%, transparent 75%);
+            mask-image: radial-gradient(640px 420px at 50% 0%, #000 30%, transparent 75%);
+  }
+  .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 72px 24px 96px; }
+
+  /* ───────── 히어로 ───────── */
+  .hero { text-align: center; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12.5px; font-weight: 600; letter-spacing: .04em;
+    color: #9adfff; background: rgba(56, 208, 255, .08);
+    border: 1px solid rgba(56, 208, 255, .22);
+    border-radius: 999px; padding: 6px 16px;
+  }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .hero h1 {
+    margin-top: 22px;
+    font-size: clamp(38px, 7vw, 52px); font-weight: 800; letter-spacing: -.02em; line-height: 1.15;
+    background: linear-gradient(180deg, #ffffff 55%, #a8ccdf);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero .sub { margin-top: 14px; font-size: 17px; color: var(--muted); }
+  .hero .sub b { color: #cfe8f5; font-weight: 600; }
+
+  /* ───────── 기기 목업 ───────── */
+  .stage { margin: 56px auto 0; width: min(400px, 92vw); position: relative; }
+  .stage .glow {
+    position: absolute; left: 10%; right: 10%; bottom: -34px; height: 70px;
+    background: radial-gradient(50% 100% at 50% 0%, rgba(56, 208, 255, .28), transparent 75%);
+    filter: blur(16px);
+  }
+  .device {
+    position: relative; padding: 13px;
+    background: linear-gradient(165deg, #23262c, #101216 55%, #17191e);
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, .09);
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.08) inset,
+      0 30px 70px -20px rgba(0, 0, 0, .8),
+      0 10px 30px rgba(0, 0, 0, .5);
+  }
+  .screen {
+    position: relative; background: #000; border-radius: 10px; aspect-ratio: 4 / 3;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    overflow: hidden;
+  }
+  .screen::after { /* 유리 반사 */
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(115deg, transparent 42%, rgba(255,255,255,.045) 46%, rgba(255,255,255,.01) 60%, transparent 64%);
+    pointer-events: none;
+  }
+  .screen .date { color: #9ea8b8; font-size: 15px; letter-spacing: .02em; }
+  .screen .time {
+    color: #f5f7fa; font-size: 68px; font-weight: 800;
+    font-variant-numeric: tabular-nums; letter-spacing: 1px; line-height: 1;
+  }
+  .screen .time .colon { animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { color: #23262e; } }
+  .screen .bar { width: 82%; height: 6px; background: #171a20; border-radius: 3px; overflow: hidden; }
+  .screen .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent-deep), var(--accent)); border-radius: 3px; width: 0; }
+  .screen .status { position: absolute; bottom: 11px; width: 87%; display: flex; justify-content: space-between; color: #616a78; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .device .brand {
+    text-align: center; margin-top: 9px; margin-bottom: -2px;
+    font-size: 10px; font-weight: 700; letter-spacing: .34em; color: #4a505a; text-indent: .34em;
+  }
+
+  /* ───────── 설치 카드 ───────── */
+  .install {
+    margin-top: 72px; position: relative; text-align: center;
+    padding: 44px 32px 36px;
+    background: linear-gradient(180deg, rgba(56,208,255,.05), rgba(255,255,255,.015) 45%);
+    border: 1px solid rgba(56, 208, 255, .16);
+    border-radius: var(--radius);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.2), 0 24px 60px -30px rgba(56, 208, 255, .12);
+  }
+  .install h2 { font-size: 24px; font-weight: 750; letter-spacing: -.01em; }
+  .install .desc { margin-top: 8px; color: var(--muted); font-size: 15px; }
+  .btn-flash {
+    margin-top: 26px;
+    display: inline-flex; align-items: center; gap: 10px;
+    cursor: pointer; border: none; border-radius: 14px;
+    padding: 17px 42px; font-size: 17px; font-weight: 700; font-family: inherit;
+    color: #021018;
+    background: linear-gradient(180deg, #66dcff, #00a8e8);
+    box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 10px 30px -6px rgba(0, 170, 232, .55);
+    transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+  }
+  .btn-flash:hover { transform: translateY(-2px); filter: brightness(1.06); box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 16px 38px -6px rgba(0, 170, 232, .6); }
+  .btn-flash:active { transform: translateY(0); }
+  .btn-flash svg { width: 20px; height: 20px; }
+  .unsupported, .not-allowed { display: inline-block; margin-top: 26px; color: var(--warn); font-size: 14.5px; }
+  .req { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .req span, .req a {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--muted); text-decoration: none;
+    background: rgba(255,255,255,.035); border: 1px solid var(--edge);
+    border-radius: 999px; padding: 6px 14px;
+  }
+  .req a { color: #9adfff; border-color: rgba(56,208,255,.25); }
+  .req a:hover { background: rgba(56,208,255,.08); }
+  .req svg { width: 14px; height: 14px; opacity: .8; }
+
+  /* ───────── 공통 섹션 ───────── */
+  section.block { margin-top: 88px; }
+  .label {
+    font-size: 12px; font-weight: 700; letter-spacing: .22em; color: var(--accent);
+    text-transform: uppercase;
+  }
+  section.block > h2 { margin-top: 10px; font-size: 27px; font-weight: 750; letter-spacing: -.02em; }
+  section.block > .lead { margin-top: 6px; color: var(--muted); font-size: 15px; }
+
+  /* 기능 그리드 */
+  .features { margin-top: 28px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
+  .feature {
+    background: var(--surface); border: 1px solid var(--edge); border-radius: 16px;
+    padding: 22px 22px 20px; transition: border-color .2s ease, background .2s ease;
+  }
+  .feature:hover { border-color: var(--edge-hover); background: rgba(56, 208, 255, .04); }
+  .feature .icon {
+    width: 40px; height: 40px; border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(56, 208, 255, .09); border: 1px solid rgba(56, 208, 255, .18);
+    color: var(--accent);
+  }
+  .feature .icon svg { width: 20px; height: 20px; }
+  .feature b { display: block; margin-top: 14px; font-size: 16px; font-weight: 650; }
+  .feature p { margin-top: 5px; font-size: 14px; color: var(--muted); }
+  .feature kbd {
+    font-family: inherit; font-size: 12px; color: #cfe8f5;
+    background: rgba(255,255,255,.06); border: 1px solid var(--edge);
+    border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px;
+  }
+
+  /* 타임라인 */
+  .steps { margin-top: 30px; display: flex; flex-direction: column; }
+  .step { display: flex; gap: 20px; position: relative; padding-bottom: 30px; }
+  .step:last-child { padding-bottom: 0; }
+  .step::before { /* 연결선 */
+    content: ""; position: absolute; left: 17px; top: 40px; bottom: 4px; width: 2px;
+    background: linear-gradient(180deg, rgba(56,208,255,.35), rgba(56,208,255,.06));
+  }
+  .step:last-child::before { display: none; }
+  .step .n {
+    flex: none; width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 700; color: var(--accent);
+    background: rgba(56, 208, 255, .08); border: 1px solid rgba(56, 208, 255, .3);
+    box-shadow: 0 0 18px -6px rgba(56, 208, 255, .5);
+  }
+  .step b { display: block; font-size: 16.5px; font-weight: 650; padding-top: 5px; }
+  .step p { margin-top: 4px; font-size: 14.5px; color: var(--muted); }
+  .step p code {
+    background: rgba(255,255,255,.05); border: 1px solid var(--edge); border-radius: 6px;
+    padding: 1.5px 7px; font-size: 13px; color: #a5d6ff;
+    font-family: "Cascadia Code", Consolas, monospace;
+  }
+
+  /* 문제 해결 */
+  .faq { margin-top: 26px; display: flex; flex-direction: column; gap: 10px; }
+  details {
+    background: var(--surface); border: 1px solid var(--edge); border-radius: 14px;
+    padding: 0 20px; transition: border-color .2s ease;
+  }
+  details[open] { border-color: rgba(56, 208, 255, .25); }
+  summary {
+    list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 16px 0; font-size: 15px; font-weight: 600; color: #d7dee8;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary .chev { flex: none; width: 18px; height: 18px; color: var(--faint); transition: transform .2s ease; }
+  details[open] summary .chev { transform: rotate(180deg); color: var(--accent); }
+  details .a { padding: 0 0 18px; font-size: 14.5px; color: var(--muted); }
+  details .a code {
+    background: rgba(255,255,255,.05); border: 1px solid var(--edge); border-radius: 6px;
+    padding: 1.5px 7px; font-size: 13px; color: #a5d6ff; font-family: Consolas, monospace;
+  }
+  details .a a { color: #9adfff; }
+
+  footer {
+    margin-top: 96px; padding-top: 28px; text-align: center;
+    border-top: 1px solid rgba(255,255,255,.05);
+    color: var(--faint); font-size: 13px;
+  }
+  footer .heart { color: #ff6b81; }
+</style>
+</head>
+<body>
+<div class="backdrop"></div>
+<div class="wrap">
+
+  <!-- 히어로 -->
+  <header class="hero">
+    <span class="badge"><span class="dot"></span>ESP32-2432S028R · Cheap Yellow Display</span>
+    <h1>책상 위, 가장 깔끔한 시계</h1>
+    <p class="sub">CYD를 <b>미니멀 NTP 탁상시계</b>로 — 케이블만 꽂으면 브라우저에서 바로 설치됩니다.</p>
+
+    <div class="stage">
+      <div class="glow"></div>
+      <div class="device">
+        <div class="screen">
+          <div class="date" id="pv-date">2026년 7월 3일 금요일</div>
+          <div class="time"><span id="pv-h">15</span><span class="colon">:</span><span id="pv-m">32</span></div>
+          <div class="bar"><i id="pv-bar"></i></div>
+          <div class="status"><span>192.168.0.42</span><span>밝기 자동</span></div>
+        </div>
+        <div class="brand">CYD·CLOCK</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 설치 -->
+  <div class="install" id="install">
+    <h2>1분 설치</h2>
+    <p class="desc">CYD를 USB로 연결하고 버튼을 누르면 끝. 앱도, 개발 환경도 필요 없습니다.</p>
+
+    <esp-web-install-button manifest="./manifest.json">
+      <button slot="activate" class="btn-flash">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        기기에 설치하기
+      </button>
+      <span slot="unsupported" class="unsupported">이 브라우저는 Web Serial을 지원하지 않습니다 — Chrome 또는 Edge로 열어 주세요.</span>
+      <span slot="not-allowed" class="not-allowed">이 페이지는 HTTPS 또는 localhost에서만 동작합니다.</span>
+    </esp-web-install-button>
+
+    <div class="req">
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="21.2" y1="8" x2="16" y2="10"/><line x1="2.8" y1="8" x2="8" y2="10"/><line x1="12" y1="22" x2="12" y2="16"/></svg>Chrome / Edge</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="7" rx="1"/><path d="M12 9v6"/><path d="M8 21h8"/><path d="M12 15v6"/></svg>데이터 USB 케이블</span>
+      <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CH340 드라이버 (포트가 안 보일 때)</a>
+    </div>
+  </div>
+
+  <!-- 기능 -->
+  <section class="block">
+    <div class="label">Features</div>
+    <h2>이런 시계가 됩니다</h2>
+    <div class="features">
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+        <b>맞출 필요 없는 시간</b>
+        <p>NTP로 한국 표준시를 자동 동기화하고, 이후에도 스스로 재동기화합니다.</p>
+      </div>
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></div>
+        <b>휴대폰으로 WiFi 설정</b>
+        <p>설치 후 <kbd>CYD-Clock</kbd> 핫스팟에 접속하면 설정 창이 자동으로 열립니다.</p>
+      </div>
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg></div>
+        <b>알아서 어두워지는 화면</b>
+        <p>내장 조도센서가 방 밝기를 감지해 밤에는 은은하게, 낮에는 선명하게.</p>
+      </div>
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="m7 15-1.76-1.76a2 2 0 0 0-2.83 2.82l3.6 3.6C7.5 21.14 9.2 22 12 22h2a8 8 0 0 0 8-8V7a2 2 0 0 0-4 0v5"/></svg></div>
+        <b>터치 한 번으로 조작</b>
+        <p>왼쪽 탭 <kbd>12/24시간제</kbd> · 오른쪽 탭 <kbd>밝기 모드</kbd> · 5초 누름 <kbd>WiFi 초기화</kbd></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 설치 과정 -->
+  <section class="block">
+    <div class="label">Guide</div>
+    <h2>설치는 3분이면 끝</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="n">1</div>
+        <div><b>USB로 연결</b>
+        <p>데이터 전송이 되는 케이블로 PC와 연결하세요. 충전 전용 케이블은 인식되지 않습니다.</p></div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div><b>기기에 설치하기</b>
+        <p>위의 버튼을 누르고 목록에서 <code>CH340</code> 포트를 선택하면 자동으로 설치됩니다.</p></div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div><b>휴대폰으로 WiFi 연결</b>
+        <p>기기 화면 안내에 따라 휴대폰 WiFi 목록에서 <code>CYD-Clock</code>에 접속하고, 자동으로 뜨는 창에서 집 WiFi를 선택하세요. 이후에는 전원만 꽂으면 됩니다.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 문제 해결 -->
+  <section class="block">
+    <div class="label">Help</div>
+    <h2>문제가 있나요?</h2>
+    <div class="faq">
+      <details>
+        <summary>포트 선택 창에 아무것도 안 나와요<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></summary>
+        <div class="a">CH340 드라이버가 없는 경우입니다. 위의 <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank">드라이버 링크</a>에서 설치한 뒤 케이블을 뽑았다 다시 꽂아 주세요. 충전 전용 케이블도 인식되지 않는 원인입니다.</div>
+      </details>
+      <details>
+        <summary>설치 중 "Failed to initialize" 오류가 나요<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></summary>
+        <div class="a">다른 프로그램(시리얼 모니터, Arduino IDE 등)이 포트를 사용 중이면 실패합니다. 모두 닫고 다시 시도하세요. 일부 보드는 설치 시작 시 <b>BOOT 버튼을 누른 채</b> 연결해야 할 수 있습니다.</div>
+      </details>
+      <details>
+        <summary>화면 색이 반전되어 보여요 (배경이 흰색)<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></summary>
+        <div class="a">일부 CYD 변종 패널의 특성입니다. <code>src/main.cpp</code>의 <code>PANEL_INVERT</code>를 <code>true</code>로 바꿔 다시 빌드하면 해결됩니다.</div>
+      </details>
+      <details>
+        <summary>시간이 "--:--"로만 나와요<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></summary>
+        <div class="a">WiFi는 연결됐지만 NTP 동기화가 아직 안 된 상태입니다. 잠시 기다리거나 공유기의 인터넷 연결을 확인하세요. 시계 화면을 <b>5초간 길게 누르면</b> WiFi를 다시 설정할 수 있습니다.</div>
+      </details>
+    </div>
+  </section>
+
+  <footer>
+    CYD Desk Clock v1.0.0 · ESP Web Tools · 소스는 <code>src/main.cpp</code> · made with <span class="heart">Claude Fable 5</span>
+  </footer>
+</div>
+
+<script type="module" src="./vendor/esp-web-tools/install-button.js"></script>
+<script>
+  // 미리보기 시계를 실제 시간으로 구동
+  const WEEK = ["일요일","월요일","화요일","수요일","목요일","금요일","토요일"];
+  function tick() {
+    const n = new Date();
+    document.getElementById("pv-date").textContent =
+      `${n.getFullYear()}년 ${n.getMonth() + 1}월 ${n.getDate()}일 ${WEEK[n.getDay()]}`;
+    document.getElementById("pv-h").textContent = String(n.getHours()).padStart(2, "0");
+    document.getElementById("pv-m").textContent = String(n.getMinutes()).padStart(2, "0");
+    document.getElementById("pv-bar").style.width = ((n.getSeconds() * 1000 + n.getMilliseconds()) / 600) + "%";
+  }
+  tick();
+  setInterval(tick, 250);
+</script>
+</body>
+</html>
