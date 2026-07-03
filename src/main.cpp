@@ -17,7 +17,9 @@
 #include <sys/time.h>
 
 #define LGFX_USE_V1
+#define LGFX_SUNTON_ESP32_2432S028
 #include <LovyanGFX.hpp>
+#include <LGFX_AUTODETECT.hpp>
 
 // ================= 사용자 설정 =================
 static const char* TZ_INFO = "KST-9";            // 한국 표준시 (변경: https://gist.github.com/alwynallan/24d96091655391107939 참고)
@@ -25,6 +27,7 @@ static const char* NTP_1   = "kr.pool.ntp.org";
 static const char* NTP_2   = "time.google.com";
 static const char* NTP_3   = "pool.ntp.org";
 static const char* AP_NAME = "CYD-Clock";        // 최초 WiFi 설정용 핫스팟 이름
+static const uint8_t CLOCK_ROTATION = 1;         // 가로 방향. 화면이 180도 뒤집히면 3으로 변경.
 
 // 화면 색이 반전되어 보이는 CYD 변종(배경이 하얗게 나옴)이라면 true 로 바꾸세요.
 #define PANEL_INVERT false
@@ -43,83 +46,11 @@ static const int PIN_LED_G = 16;
 static const int PIN_LED_B = 17;
 
 // ================= 디스플레이 설정 =================
-class LGFX : public lgfx::LGFX_Device {
-  lgfx::Panel_ILI9341 _panel;
-  lgfx::Bus_SPI       _bus;
-  lgfx::Light_PWM     _light;
-  lgfx::Touch_XPT2046 _touch;
-
-public:
-  LGFX() {
-    { // 디스플레이 SPI 버스 (HSPI)
-      auto cfg = _bus.config();
-      cfg.spi_host    = SPI2_HOST;
-      cfg.spi_mode    = 0;
-      cfg.freq_write  = 40000000;
-      cfg.freq_read   = 16000000;
-      cfg.spi_3wire   = false;
-      cfg.use_lock    = true;
-      cfg.dma_channel = SPI_DMA_CH_AUTO;
-      cfg.pin_sclk    = 14;
-      cfg.pin_mosi    = 13;
-      cfg.pin_miso    = 12;
-      cfg.pin_dc      = 2;
-      _bus.config(cfg);
-      _panel.setBus(&_bus);
-    }
-    { // 패널
-      auto cfg = _panel.config();
-      cfg.pin_cs           = 15;
-      cfg.pin_rst          = -1;
-      cfg.pin_busy         = -1;
-      cfg.panel_width      = 240;
-      cfg.panel_height     = 320;
-      cfg.offset_x         = 0;
-      cfg.offset_y         = 0;
-      cfg.offset_rotation  = 0;
-      cfg.dummy_read_pixel = 8;
-      cfg.dummy_read_bits  = 1;
-      cfg.readable         = true;
-      cfg.invert           = PANEL_INVERT;
-      cfg.rgb_order        = false;
-      cfg.dlen_16bit       = false;
-      cfg.bus_shared       = false;
-      _panel.config(cfg);
-    }
-    { // 백라이트 PWM
-      auto cfg = _light.config();
-      cfg.pin_bl      = 21;
-      cfg.invert      = false;
-      cfg.freq        = 12000;
-      cfg.pwm_channel = 7;
-      _light.config(cfg);
-      _panel.setLight(&_light);
-    }
-    { // 터치 (XPT2046, 별도 SPI 핀)
-      auto cfg = _touch.config();
-      cfg.x_min           = 300;
-      cfg.x_max           = 3800;
-      cfg.y_min           = 200;
-      cfg.y_max           = 3700;
-      cfg.pin_int         = 36;
-      cfg.bus_shared      = false;
-      cfg.offset_rotation = 0;
-      cfg.spi_host        = SPI3_HOST;
-      cfg.freq            = 1000000;
-      cfg.pin_sclk        = 25;
-      cfg.pin_mosi        = 32;
-      cfg.pin_miso        = 39;
-      cfg.pin_cs          = 33;
-      _touch.config(cfg);
-      _panel.setTouch(&_touch);
-    }
-    setPanel(&_panel);
-  }
-};
-
 static LGFX tft;
 static LGFX_Sprite canvas(&tft);
 static bool canvasOk = false;
+static int16_t screenW = 320;
+static int16_t screenH = 240;
 
 static WiFiManager wm;
 static Preferences prefs;
@@ -142,25 +73,44 @@ static const char* WEEKDAY_KR[7] = { "일요일", "월요일", "화요일", "수
 static inline uint32_t C(uint8_t r, uint8_t g, uint8_t b) { return lgfx::color888(r, g, b); }
 
 // ================= 그리기 유틸 =================
-static void drawWifiIcon(LGFX_Sprite& g, int x, int y, uint32_t col) {
+template <typename GFX>
+static void drawWifiIcon(GFX& g, int x, int y, uint32_t col) {
   g.fillCircle(x, y, 2, col);
   g.fillArc(x, y, 6, 4, 225, 315, col);
   g.fillArc(x, y, 11, 9, 225, 315, col);
 }
 
+static void setLandscapeRotation() {
+  for (uint8_t i = 0; i < 4; ++i) {
+    uint8_t rotation = (CLOCK_ROTATION + i) & 3;
+    tft.setRotation(rotation);
+    if (tft.width() >= tft.height()) break;
+  }
+  screenW = tft.width();
+  screenH = tft.height();
+}
+
 // 부팅/설정 단계용 전체 화면 메시지
 static void drawScreen(const char* title, const char* line1, const char* line2 = nullptr, const char* line3 = nullptr) {
+  const int w = tft.width();
+  const int h = tft.height();
+  const int cx = w / 2;
+  const int titleY = h * 29 / 100;
+  const int ruleW = min(80, max(40, w / 4));
+  const int lineY = h * 56 / 100;
+  const int lineGap = 25;
+
   tft.fillScreen(C(8, 10, 16));
   tft.setTextDatum(textdatum_t::middle_center);
   tft.setFont(&fonts::efontKR_24);
   tft.setTextColor(C(255, 255, 255), C(8, 10, 16));
-  tft.drawString(title, 160, 70);
-  tft.fillRoundRect(120, 95, 80, 3, 1, C(0, 190, 255));
+  tft.drawString(title, cx, titleY);
+  tft.fillRoundRect(cx - ruleW / 2, titleY + 25, ruleW, 3, 1, C(0, 190, 255));
   tft.setFont(&fonts::efontKR_16);
   tft.setTextColor(C(170, 178, 192), C(8, 10, 16));
-  if (line1) tft.drawString(line1, 160, 135);
-  if (line2) tft.drawString(line2, 160, 160);
-  if (line3) tft.drawString(line3, 160, 185);
+  if (line1) tft.drawString(line1, cx, lineY);
+  if (line2) tft.drawString(line2, cx, lineY + lineGap);
+  if (line3) tft.drawString(line3, cx, lineY + lineGap * 2);
 }
 
 static void showToast(const char* msg) {
@@ -168,8 +118,82 @@ static void showToast(const char* msg) {
   toastUntil = millis() + 2000;
 }
 
+template <typename GFX>
+static void renderClockFace(GFX& g,
+                            const char* dateStr,
+                            const char* hh,
+                            const char* mm,
+                            const char* ampm,
+                            const char* statusL,
+                            const char* statusR,
+                            bool timeValid,
+                            bool colonOn,
+                            int barW,
+                            bool wifiOk,
+                            bool toastOn) {
+  const int w = screenW;
+  const int h = screenH;
+  const int cx = w / 2;
+  const int marginX = max(16, w / 16);
+  const int barFullW = max(80, w - marginX * 2);
+  const int dateY = max(10, h * 7 / 100);
+  const int timeY = h * 47 / 100;
+  const int barY = h * 71 / 100;
+  const int statusY = h - 18;
+
+  // 날짜 (상단)
+  g.setFont(&fonts::efontKR_24);
+  g.setTextDatum(textdatum_t::top_center);
+  g.setTextColor(C(158, 168, 184));
+  g.drawString(dateStr, cx, dateY);
+
+  // 시간 (중앙, 콜론은 숨쉬듯 깜빡임)
+  g.setFont(&fonts::Font8);
+  int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
+  int x0 = cx - (wH + wC + wM) / 2;
+  g.setTextDatum(textdatum_t::middle_left);
+  g.setTextColor(C(245, 247, 250));
+  g.drawString(hh, x0, timeY);
+  g.setTextColor(colonOn ? C(245, 247, 250) : C(45, 48, 56));
+  g.drawString(":", x0 + wH, timeY);
+  g.setTextColor(C(245, 247, 250));
+  g.drawString(mm, x0 + wH + wC, timeY);
+
+  // 오전/오후 (12시간제)
+  if (use12h && timeValid) {
+    g.setFont(&fonts::efontKR_16);
+    g.setTextDatum(textdatum_t::middle_left);
+    g.setTextColor(C(0, 190, 255));
+    g.drawString(ampm, x0 + wH + wC + wM + 10, timeY + 20);
+  }
+
+  // 초 진행 바
+  g.fillRoundRect(marginX, barY, barFullW, 6, 3, C(30, 33, 40));
+  if (barW > 6) g.fillRoundRect(marginX, barY, barW, 6, 3, C(0, 190, 255));
+
+  // 하단 상태줄 / 토스트
+  g.setFont(&fonts::efontKR_16);
+  if (toastOn) {
+    g.setTextDatum(textdatum_t::middle_center);
+    g.setTextColor(C(255, 214, 90));
+    g.drawString(toastMsg, cx, statusY);
+  } else {
+    drawWifiIcon(g, marginX + 4, statusY + 4, wifiOk ? C(0, 190, 255) : C(70, 74, 84));
+    g.setTextDatum(textdatum_t::middle_left);
+    g.setTextColor(C(110, 118, 132));
+    g.drawString(statusL, marginX + 22, statusY);
+    g.setTextDatum(textdatum_t::middle_right);
+    g.drawString(statusR, w - marginX, statusY);
+  }
+}
+
 // ================= 메인 화면 =================
 static void drawClockFrame() {
+  const int w = screenW;
+  const int h = screenH;
+  const int marginX = max(16, w / 16);
+  const int barFullW = max(80, w - marginX * 2);
+
   time_t now = time(nullptr);
   struct tm t;
   localtime_r(&now, &t);
@@ -205,66 +229,26 @@ static void drawClockFrame() {
   snprintf(statusR, sizeof(statusR), "밝기 %s", BRIGHT_NAME[brightMode]);
 
   bool colonOn = (subMs < 600);
-  int  barW    = timeValid ? (int)((t.tm_sec * 1000 + subMs) * 280L / 60000L) : 0;
+  int  barW    = timeValid ? (int)((t.tm_sec * 1000 + subMs) * (long)barFullW / 60000L) : 0;
   bool toastOn = (millis() < toastUntil) && toastMsg[0];
 
   // 바뀐 게 없으면 다시 그리지 않음
   char sig[192];
-  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d",
-           hh, mm, colonOn, barW, dateStr, statusL, statusR, wifiOk, toastOn ? toastMsg : "", (int)use12h);
+  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d|%d|%d",
+           hh, mm, colonOn, barW, dateStr, statusL, statusR, wifiOk, toastOn ? toastMsg : "", (int)use12h, w, h);
   if (strcmp(sig, lastSig) == 0) return;
   strlcpy(lastSig, sig, sizeof(lastSig));
 
-  LGFX_Sprite& g = canvas;
-  g.fillSprite(C(0, 0, 0));
-
-  // 날짜 (상단)
-  g.setFont(&fonts::efontKR_24);
-  g.setTextDatum(textdatum_t::top_center);
-  g.setTextColor(C(158, 168, 184));
-  g.drawString(dateStr, 160, 18);
-
-  // 시간 (중앙, 콜론은 숨쉬듯 깜빡임)
-  g.setFont(&fonts::Font8);
-  int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
-  int x0 = 160 - (wH + wC + wM) / 2;
-  const int timeY = 112;
-  g.setTextDatum(textdatum_t::middle_left);
-  g.setTextColor(C(245, 247, 250));
-  g.drawString(hh, x0, timeY);
-  g.setTextColor(colonOn ? C(245, 247, 250) : C(45, 48, 56));
-  g.drawString(":", x0 + wH, timeY);
-  g.setTextColor(C(245, 247, 250));
-  g.drawString(mm, x0 + wH + wC, timeY);
-
-  // 오전/오후 (12시간제)
-  if (use12h && timeValid) {
-    g.setFont(&fonts::efontKR_16);
-    g.setTextDatum(textdatum_t::middle_left);
-    g.setTextColor(C(0, 190, 255));
-    g.drawString(ampm, x0 + wH + wC + wM + 10, timeY + 20);
-  }
-
-  // 초 진행 바
-  g.fillRoundRect(20, 170, 280, 6, 3, C(30, 33, 40));
-  if (barW > 6) g.fillRoundRect(20, 170, barW, 6, 3, C(0, 190, 255));
-
-  // 하단 상태줄 / 토스트
-  g.setFont(&fonts::efontKR_16);
-  if (toastOn) {
-    g.setTextDatum(textdatum_t::middle_center);
-    g.setTextColor(C(255, 214, 90));
-    g.drawString(toastMsg, 160, 222);
+  if (canvasOk) {
+    canvas.fillSprite(C(0, 0, 0));
+    renderClockFace(canvas, dateStr, hh, mm, ampm, statusL, statusR,
+                    timeValid, colonOn, barW, wifiOk, toastOn);
+    canvas.pushSprite(0, 0);
   } else {
-    drawWifiIcon(g, 24, 226, wifiOk ? C(0, 190, 255) : C(70, 74, 84));
-    g.setTextDatum(textdatum_t::middle_left);
-    g.setTextColor(C(110, 118, 132));
-    g.drawString(statusL, 42, 222);
-    g.setTextDatum(textdatum_t::middle_right);
-    g.drawString(statusR, 304, 222);
+    tft.fillScreen(C(0, 0, 0));
+    renderClockFace(tft, dateStr, hh, mm, ampm, statusL, statusR,
+                    timeValid, colonOn, barW, wifiOk, toastOn);
   }
-
-  g.pushSprite(0, 0);
 }
 
 // ================= 밝기 =================
@@ -315,7 +299,7 @@ static void handleTouch() {
   } else if (!pressed && wasPressed) {   // 손 뗌
     uint32_t held = nowMs - pressStart;
     if (held < 500) {                    // 짧은 탭
-      if (pressX < 160) {
+      if (pressX < screenW / 2) {
         use12h = !use12h;
         prefs.putBool("use12h", use12h);
         showToast(use12h ? "12시간제" : "24시간제");
@@ -352,11 +336,15 @@ void setup() {
   analogSetPinAttenuation(PIN_LDR, ADC_11db);
 
   tft.init();
-  tft.setRotation(1);            // 가로 320x240, USB 오른쪽
+  setLandscapeRotation();
+  tft.invertDisplay(PANEL_INVERT);
   tft.setBrightness(180);
 
   canvas.setColorDepth(8);
-  canvasOk = canvas.createSprite(320, 240) != nullptr;
+  canvasOk = canvas.createSprite(screenW, screenH) != nullptr;
+  if (!canvasOk) {
+    Serial.println("Failed to allocate display canvas");
+  }
 
   prefs.begin("clock", false);
   use12h     = prefs.getBool("use12h", false);
