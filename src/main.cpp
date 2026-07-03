@@ -25,6 +25,7 @@ static const char* NTP_1   = "kr.pool.ntp.org";
 static const char* NTP_2   = "time.google.com";
 static const char* NTP_3   = "pool.ntp.org";
 static const char* AP_NAME = "CYD-Clock";        // 최초 WiFi 설정용 핫스팟 이름
+static const char* HOSTNAME = "cyd-clock";
 static const uint8_t CLOCK_ROTATION = 6;         // TPM408/CYD v2 가로 방향. 뒤집히면 4로 변경.
 
 // 화면 색이 반전되어 보이는 CYD 변종(배경이 하얗게 나옴)이라면 true 로 바꾸세요.
@@ -128,6 +129,10 @@ static int16_t screenH = 240;
 
 static WiFiManager wm;
 static Preferences prefs;
+static WiFiManagerParameter wifiHint(
+  "<p style='font-size:13px;color:#666'>ESP32는 2.4GHz WiFi만 지원합니다. "
+  "공유기가 WPA3-only이면 WPA2/WPA3 혼합 또는 WPA2로 바꿔 주세요.</p>");
+static bool wifiHintAdded = false;
 
 // ================= 상태 =================
 static bool    use12h     = false;
@@ -394,11 +399,67 @@ static void handleTouch() {
 }
 
 // ================= 설정 =================
+static const char* wifiStatusHint(wl_status_t status) {
+  switch (status) {
+    case WL_CONNECTED:     return "연결됨";
+    case WL_NO_SSID_AVAIL: return "SSID 없음: 2.4GHz/채널 확인";
+    case WL_CONNECT_FAILED:return "연결 실패: 비밀번호/WPA2 확인";
+    case WL_CONNECTION_LOST:return "연결 끊김: 신호 확인";
+    case WL_DISCONNECTED:  return "연결 안 됨: 설정 필요";
+    case WL_IDLE_STATUS:   return "연결 대기 중";
+    default:               return "연결 실패";
+  }
+}
+
 static void onPortalStart(WiFiManager* w) {
   drawScreen("WiFi 설정 필요",
              "휴대폰 WiFi에서 'CYD-Clock' 접속",
-             "자동으로 뜨는 설정 창에서",
-             "집 WiFi를 선택해 주세요");
+             "2.4GHz / WPA2 WiFi를 선택",
+             "5GHz, WPA3-only는 연결 불가");
+}
+
+static bool connectWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.setHostname(HOSTNAME);
+
+  wm.setDebugOutput(true);
+  wm.setHostname(HOSTNAME);
+  wm.setCountry("KR");
+  wm.setCleanConnect(true);
+  wm.setConnectRetries(3);
+  wm.setConnectTimeout(35);
+  wm.setSaveConnectTimeout(35);
+  wm.setWiFiAutoReconnect(true);
+  wm.setMinimumSignalQuality(0);
+  wm.setRemoveDuplicateAPs(false);
+  wm.setShowPassword(true);
+  wm.setScanDispPerc(true);
+  wm.setAPCallback(onPortalStart);
+  wm.setConfigPortalTimeout(0);  // 연결될 때까지 설정 포털 유지
+
+  if (!wifiHintAdded) {
+    wm.addParameter(&wifiHint);
+    wifiHintAdded = true;
+  }
+
+  drawScreen("CYD 데스크 시계", "WiFi 연결 중...", "2.4GHz 채널 1-13 지원");
+  if (wm.autoConnect(AP_NAME)) {
+    String ssidLine = WiFi.SSID();
+    String ipLine = WiFi.localIP().toString();
+    drawScreen("WiFi 연결됨", ssidLine.c_str(), ipLine.c_str());
+    delay(900);
+    return true;
+  }
+
+  wl_status_t status = WiFi.status();
+  drawScreen("WiFi 연결 실패",
+             wifiStatusHint(status),
+             "2.4GHz / WPA2 / 비밀번호 확인",
+             "설정 화면을 다시 열어 주세요");
+  delay(3000);
+  return false;
 }
 
 void setup() {
@@ -428,14 +489,8 @@ void setup() {
 
   drawScreen("CYD 데스크 시계", "WiFi 연결 중...");
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname("cyd-clock");
-  wm.setAPCallback(onPortalStart);
-  wm.setConfigPortalTimeout(300);
-  if (!wm.autoConnect(AP_NAME)) {
-    drawScreen("연결 실패", "WiFi에 연결하지 못했습니다", "5초 후 다시 시작합니다");
-    delay(5000);
-    ESP.restart();
+  while (!connectWiFi()) {
+    delay(1000);
   }
 
   drawScreen("CYD 데스크 시계", "시간 동기화 중...");
