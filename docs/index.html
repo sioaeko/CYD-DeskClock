@@ -85,7 +85,7 @@
       0 10px 30px rgba(0, 0, 0, .5);
   }
   .screen {
-    position: relative; background: #000; border-radius: 10px; aspect-ratio: 4 / 3;
+    position: relative; background: linear-gradient(180deg, #080c18, #000); border-radius: 10px; aspect-ratio: 4 / 3;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
     overflow: hidden;
   }
@@ -238,7 +238,7 @@
   <header class="hero">
     <span class="badge"><span class="dot"></span>ESP32-2432S028R · Cheap Yellow Display</span>
     <h1>책상 위, 가장 깔끔한 시계</h1>
-    <p class="sub">CYD를 <b>미니멀 NTP 탁상시계</b>로 — 케이블만 꽂으면 브라우저에서 바로 설치됩니다.</p>
+    <p class="sub">CYD를 <b>미니멀 NTP 탁상시계</b>로 — 테마, 자동 밝기, 재연결까지 브라우저에서 바로 설치됩니다.</p>
 
     <div class="stage">
       <div class="glow"></div>
@@ -247,7 +247,7 @@
           <div class="date" id="pv-date">2026년 7월 3일 금요일</div>
           <div class="time"><span id="pv-h">15</span><span class="colon">:</span><span id="pv-m">32</span></div>
           <div class="bar"><i id="pv-bar"></i></div>
-          <div class="status"><span>192.168.0.42</span><span>밝기 자동</span></div>
+          <div class="status"><span>WiFi -52dBm</span><span>네온 자동 72%</span></div>
         </div>
         <div class="brand">CYD·CLOCK</div>
       </div>
@@ -259,7 +259,7 @@
     <h2>1분 설치</h2>
     <p class="desc">CYD를 USB로 연결하고 버튼을 누르면 끝. 앱도, 개발 환경도 필요 없습니다.</p>
 
-    <esp-web-install-button manifest="./manifest.json?v=1.0.4">
+    <esp-web-install-button manifest="./manifest.json?v=1.0.5">
       <button slot="activate" class="btn-flash">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         기기에 설치하기
@@ -292,13 +292,13 @@
       </div>
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg></div>
-        <b>알아서 어두워지는 화면</b>
-        <p>내장 조도센서가 방 밝기를 감지해 밤에는 은은하게, 낮에는 선명하게.</p>
+        <b>테마와 자동 밝기</b>
+        <p>네온, 앰버, 포레스트, 모노 테마를 고르고 방 밝기에 맞춰 백라이트를 조절합니다.</p>
       </div>
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="m7 15-1.76-1.76a2 2 0 0 0-2.83 2.82l3.6 3.6C7.5 21.14 9.2 22 12 22h2a8 8 0 0 0 8-8V7a2 2 0 0 0-4 0v5"/></svg></div>
         <b>터치 한 번으로 조작</b>
-        <p>왼쪽 탭 <kbd>12/24시간제</kbd> · 오른쪽 탭 <kbd>밝기 모드</kbd> · 5초 누름 <kbd>WiFi 초기화</kbd></p>
+        <p>왼쪽 탭 <kbd>12/24시간제</kbd> · 가운데 탭 <kbd>테마</kbd> · 오른쪽 탭 <kbd>밝기</kbd> · 5초 누름 <kbd>WiFi 초기화</kbd></p>
       </div>
     </div>
   </section>
@@ -321,7 +321,7 @@
       <div class="step">
         <div class="n">3</div>
         <div><b>휴대폰으로 WiFi 연결</b>
-        <p>기기 화면 안내에 따라 휴대폰 WiFi 목록에서 <code>CYD-Clock</code>에 접속하고, 자동으로 뜨는 창에서 집 WiFi를 선택하세요. 이후에는 전원만 꽂으면 됩니다.</p></div>
+        <p>기기 화면 안내에 따라 휴대폰 WiFi 목록에서 <code>CYD-Clock</code>에 접속하고, 자동으로 뜨는 창에서 2.4GHz 집 WiFi를 선택하세요. 이후에는 전원만 꽂으면 됩니다.</p></div>
       </div>
     </div>
   </section>
@@ -344,6 +344,10 @@
         <div class="a">일부 CYD 변종 패널의 특성입니다. <code>src/main.cpp</code>의 <code>PANEL_INVERT</code>를 <code>true</code>로 바꿔 다시 빌드하면 해결됩니다.</div>
       </details>
       <details>
+        <summary>집 WiFi 연결이 잘 안 돼요<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></summary>
+        <div class="a">ESP32는 2.4GHz WiFi만 지원합니다. 공유기가 5GHz 전용, WPA3-only, 숨김 SSID로 설정되어 있으면 연결이 실패할 수 있어요. WPA2 또는 WPA2/WPA3 혼합 모드와 2.4GHz SSID를 사용해 주세요.</div>
+      </details>
+      <details>
         <summary>시간이 "--:--"로만 나와요<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></summary>
         <div class="a">WiFi는 연결됐지만 NTP 동기화가 아직 안 된 상태입니다. 잠시 기다리거나 공유기의 인터넷 연결을 확인하세요. 시계 화면을 <b>5초간 길게 누르면</b> WiFi를 다시 설정할 수 있습니다.</div>
       </details>
@@ -351,7 +355,7 @@
   </section>
 
   <footer>
-    CYD Desk Clock v1.0.4 · ESP Web Tools · 소스는 <code>src/main.cpp</code> · made with <span class="heart">Claude Fable 5</span>
+    CYD Desk Clock v1.0.5 · ESP Web Tools · 소스는 <code>src/main.cpp</code> · made with <span class="heart">Claude Fable 5</span>
   </footer>
 </div>
 

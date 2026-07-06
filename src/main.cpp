@@ -6,7 +6,7 @@
  *  - NTP 시간 동기화 (한국 표준시), 이후 자동 재동기화
  *  - 큰 시계 + 한글 날짜/요일 + 초 진행 바
  *  - 조도센서(LDR) 자동 밝기 조절
- *  - 터치: 왼쪽 탭 = 12/24시간제 전환, 오른쪽 탭 = 밝기 모드 전환,
+ *  - 터치: 왼쪽 탭 = 12/24시간제 전환, 가운데 탭 = 테마 변경, 오른쪽 탭 = 밝기 모드 전환,
  *          5초 길게 누르기 = WiFi 설정 초기화
  */
 #include <Arduino.h>
@@ -137,19 +137,42 @@ static bool wifiHintAdded = false;
 // ================= 상태 =================
 static bool    use12h     = false;
 static uint8_t brightMode = 0;              // 0=자동 1=최대 2=중간 3=최소
+static uint8_t themeIndex = 0;
 static const uint8_t BRIGHT_FIXED[4] = { 0, 255, 110, 25 };
 static const char*   BRIGHT_NAME[4]  = { "자동", "최대", "중간", "최소" };
+
+struct Theme {
+  const char* name;
+  uint8_t bgTop[3], bgBottom[3], panel[3], fg[3], muted[3], faint[3], accent[3], accent2[3], warn[3];
+};
+
+static const Theme THEMES[] = {
+  { "네온", { 8, 12, 24 }, { 0, 0, 0 }, { 13, 17, 28 }, { 245, 248, 252 }, { 150, 160, 178 }, { 84, 92, 108 }, { 0, 190, 255 }, { 95, 235, 185 }, { 255, 214, 90 } },
+  { "앰버", { 26, 13, 7 }, { 2, 1, 0 }, { 24, 14, 8 }, { 255, 244, 222 }, { 188, 160, 128 }, { 104, 78, 54 }, { 255, 170, 58 }, { 255, 91, 74 }, { 255, 222, 120 } },
+  { "포레스트", { 5, 24, 22 }, { 0, 4, 3 }, { 8, 25, 22 }, { 232, 250, 242 }, { 137, 174, 160 }, { 72, 104, 92 }, { 74, 222, 128 }, { 56, 189, 248 }, { 250, 204, 21 } },
+  { "모노", { 15, 16, 20 }, { 0, 0, 0 }, { 18, 19, 24 }, { 250, 250, 250 }, { 160, 164, 172 }, { 86, 90, 102 }, { 220, 224, 232 }, { 118, 128, 142 }, { 255, 214, 90 } },
+};
+static const uint8_t THEME_COUNT = sizeof(THEMES) / sizeof(THEMES[0]);
 
 static float    ldrEma        = 2000.0f;
 static int      curBrightness = -1;
 static char     toastMsg[64]  = "";
 static uint32_t toastUntil    = 0;
-static char     lastSig[192]  = "";
+static char     lastSig[256]  = "";
 
 static const char* WEEKDAY_KR[7] = { "일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일" };
 
 // 색상 (RGB888)
 static inline uint32_t C(uint8_t r, uint8_t g, uint8_t b) { return lgfx::color888(r, g, b); }
+static inline uint32_t TC(const uint8_t rgb[3]) { return C(rgb[0], rgb[1], rgb[2]); }
+
+static uint32_t blendColor(const uint8_t from[3], const uint8_t to[3], int pos, int span) {
+  int ratio = (span > 1) ? constrain(pos * 255 / (span - 1), 0, 255) : 0;
+  int r = from[0] + ((int)to[0] - from[0]) * ratio / 255;
+  int g = from[1] + ((int)to[1] - from[1]) * ratio / 255;
+  int b = from[2] + ((int)to[2] - from[2]) * ratio / 255;
+  return C((uint8_t)r, (uint8_t)g, (uint8_t)b);
+}
 
 // ================= 그리기 유틸 =================
 template <typename GFX>
@@ -157,6 +180,21 @@ static void drawWifiIcon(GFX& g, int x, int y, uint32_t col) {
   g.fillCircle(x, y, 2, col);
   g.fillArc(x, y, 6, 4, 225, 315, col);
   g.fillArc(x, y, 11, 9, 225, 315, col);
+}
+
+template <typename GFX>
+static void drawThemedBackground(GFX& g, const Theme& theme, int w, int h) {
+  const int bandH = 8;
+  for (int y = 0; y < h; y += bandH) {
+    g.fillRect(0, y, w, bandH, blendColor(theme.bgTop, theme.bgBottom, y, h));
+  }
+
+  // Subtle structure so the display reads as a clock face, not a plain black panel.
+  g.fillRect(0, 0, w, 2, TC(theme.accent));
+  g.fillRect(0, h - 1, w, 1, TC(theme.faint));
+  for (int y = 44; y < h - 28; y += 28) {
+    g.fillRect(18, y, w - 36, 1, blendColor(theme.panel, theme.bgBottom, y, h));
+  }
 }
 
 static void setLandscapeRotation() {
@@ -212,20 +250,30 @@ static void renderClockFace(GFX& g,
                             int barW,
                             bool wifiOk,
                             bool toastOn) {
+  const Theme& theme = THEMES[themeIndex % THEME_COUNT];
   const int w = screenW;
   const int h = screenH;
   const int cx = w / 2;
   const int marginX = max(16, w / 16);
   const int barFullW = max(80, w - marginX * 2);
-  const int dateY = max(10, h * 7 / 100);
+  const int dateY = max(9, h * 6 / 100);
   const int timeY = h * 47 / 100;
   const int barY = h * 71 / 100;
   const int statusY = h - 18;
 
+  drawThemedBackground(g, theme, w, h);
+
+  const int panelX = max(8, marginX - 8);
+  const int panelY = timeY - 58;
+  const int panelW = w - panelX * 2;
+  const int panelH = 112;
+  g.fillRoundRect(panelX, panelY, panelW, panelH, 10, TC(theme.panel));
+  g.drawRoundRect(panelX, panelY, panelW, panelH, 10, TC(theme.faint));
+
   // 날짜 (상단)
   g.setFont(&fonts::efontKR_24);
   g.setTextDatum(textdatum_t::top_center);
-  g.setTextColor(C(158, 168, 184));
+  g.setTextColor(TC(theme.muted));
   g.drawString(dateStr, cx, dateY);
 
   // 시간 (중앙, 콜론은 숨쉬듯 깜빡임)
@@ -233,35 +281,49 @@ static void renderClockFace(GFX& g,
   int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
   int x0 = cx - (wH + wC + wM) / 2;
   g.setTextDatum(textdatum_t::middle_left);
-  g.setTextColor(C(245, 247, 250));
+  g.setTextColor(TC(theme.faint));
+  g.drawString(hh, x0 + 2, timeY + 3);
+  g.drawString(":", x0 + wH + 2, timeY + 3);
+  g.drawString(mm, x0 + wH + wC + 2, timeY + 3);
+  g.setTextColor(TC(theme.fg));
   g.drawString(hh, x0, timeY);
-  g.setTextColor(colonOn ? C(245, 247, 250) : C(45, 48, 56));
+  g.setTextColor(colonOn ? TC(theme.fg) : TC(theme.faint));
   g.drawString(":", x0 + wH, timeY);
-  g.setTextColor(C(245, 247, 250));
+  g.setTextColor(TC(theme.fg));
   g.drawString(mm, x0 + wH + wC, timeY);
 
   // 오전/오후 (12시간제)
   if (use12h && timeValid) {
     g.setFont(&fonts::efontKR_16);
     g.setTextDatum(textdatum_t::middle_left);
-    g.setTextColor(C(0, 190, 255));
-    g.drawString(ampm, x0 + wH + wC + wM + 10, timeY + 20);
+    int ampmX = min(w - marginX - 42, x0 + wH + wC + wM + 10);
+    int ampmW = g.textWidth(ampm) + 14;
+    g.fillRoundRect(ampmX - 7, timeY + 8, ampmW, 22, 7, blendColor(theme.panel, theme.bgBottom, 160, 240));
+    g.setTextColor(TC(theme.accent));
+    g.drawString(ampm, ampmX, timeY + 20);
   }
 
   // 초 진행 바
-  g.fillRoundRect(marginX, barY, barFullW, 6, 3, C(30, 33, 40));
-  if (barW > 6) g.fillRoundRect(marginX, barY, barW, 6, 3, C(0, 190, 255));
+  int safeBarW = constrain(barW, 0, barFullW);
+  g.fillRoundRect(marginX, barY, barFullW, 7, 3, TC(theme.faint));
+  if (safeBarW > 0) {
+    if (safeBarW > 6) g.fillRoundRect(marginX, barY, safeBarW, 7, 3, TC(theme.accent));
+    else              g.fillRect(marginX, barY, safeBarW, 7, TC(theme.accent));
+    g.fillCircle(marginX + safeBarW, barY + 3, 3, TC(theme.accent2));
+  }
 
   // 하단 상태줄 / 토스트
   g.setFont(&fonts::efontKR_16);
   if (toastOn) {
     g.setTextDatum(textdatum_t::middle_center);
-    g.setTextColor(C(255, 214, 90));
+    int toastW = min(w - marginX * 2, g.textWidth(toastMsg) + 22);
+    g.fillRoundRect(cx - toastW / 2, statusY - 13, toastW, 25, 8, TC(theme.panel));
+    g.setTextColor(TC(theme.warn));
     g.drawString(toastMsg, cx, statusY);
   } else {
-    drawWifiIcon(g, marginX + 4, statusY + 4, wifiOk ? C(0, 190, 255) : C(70, 74, 84));
+    drawWifiIcon(g, marginX + 4, statusY + 4, wifiOk ? TC(theme.accent) : TC(theme.faint));
     g.setTextDatum(textdatum_t::middle_left);
-    g.setTextColor(C(110, 118, 132));
+    g.setTextColor(TC(theme.muted));
     g.drawString(statusL, marginX + 22, statusY);
     g.setTextDatum(textdatum_t::middle_right);
     g.drawString(statusR, w - marginX, statusY);
@@ -285,7 +347,7 @@ static void drawClockFrame() {
   int subMs = tv.tv_usec / 1000;
 
   // --- 표시 내용 구성 ---
-  char hh[4], mm[4], dateStr[64], statusL[48], statusR[24];
+  char hh[4], mm[4], dateStr[64], statusL[40], statusR[40];
   const char* ampm = "";
   if (timeValid) {
     int hour = t.tm_hour;
@@ -305,23 +367,23 @@ static void drawClockFrame() {
   }
 
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
-  if (wifiOk) snprintf(statusL, sizeof(statusL), "%s", WiFi.localIP().toString().c_str());
-  else        snprintf(statusL, sizeof(statusL), "WiFi 재연결 중...");
-  snprintf(statusR, sizeof(statusR), "밝기 %s", BRIGHT_NAME[brightMode]);
+  if (wifiOk) snprintf(statusL, sizeof(statusL), "WiFi %ddBm", WiFi.RSSI());
+  else        snprintf(statusL, sizeof(statusL), "WiFi 재연결");
+  int brightPct = (curBrightness >= 0) ? (curBrightness * 100 + 127) / 255 : 0;
+  snprintf(statusR, sizeof(statusR), "%s %s %d%%", THEMES[themeIndex % THEME_COUNT].name, BRIGHT_NAME[brightMode], brightPct);
 
   bool colonOn = (subMs < 600);
   int  barW    = timeValid ? (int)((t.tm_sec * 1000 + subMs) * (long)barFullW / 60000L) : 0;
   bool toastOn = (millis() < toastUntil) && toastMsg[0];
 
   // 바뀐 게 없으면 다시 그리지 않음
-  char sig[192];
-  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d|%d|%d",
-           hh, mm, colonOn, barW, dateStr, statusL, statusR, wifiOk, toastOn ? toastMsg : "", (int)use12h, w, h);
+  char sig[256];
+  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d|%d|%d|%d",
+           hh, mm, colonOn, barW, dateStr, statusL, statusR, wifiOk, toastOn ? toastMsg : "", (int)use12h, themeIndex, w, h);
   if (strcmp(sig, lastSig) == 0) return;
   strlcpy(lastSig, sig, sizeof(lastSig));
 
   if (canvasOk) {
-    canvas.fillSprite(C(0, 0, 0));
     renderClockFace(canvas, dateStr, hh, mm, ampm, statusL, statusR,
                     timeValid, colonOn, barW, wifiOk, toastOn);
     canvas.pushSprite(0, 0);
@@ -380,10 +442,16 @@ static void handleTouch() {
   } else if (!pressed && wasPressed) {   // 손 뗌
     uint32_t held = nowMs - pressStart;
     if (held < 500) {                    // 짧은 탭
-      if (pressX < screenW / 2) {
+      if (pressX < screenW / 3) {
         use12h = !use12h;
         prefs.putBool("use12h", use12h);
         showToast(use12h ? "12시간제" : "24시간제");
+      } else if (pressX < screenW * 2 / 3) {
+        themeIndex = (themeIndex + 1) % THEME_COUNT;
+        prefs.putUChar("theme", themeIndex);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "테마: %s", THEMES[themeIndex].name);
+        showToast(buf);
       } else {
         brightMode = (brightMode + 1) % 4;
         prefs.putUChar("bmode", brightMode);
@@ -462,6 +530,34 @@ static bool connectWiFi() {
   return false;
 }
 
+static void maintainWiFi() {
+  static uint32_t lastCheck = 0;
+  static uint32_t lastReconnect = 0;
+  static bool wasConnected = true;
+
+  uint32_t nowMs = millis();
+  if (nowMs - lastCheck < 1000) return;
+  lastCheck = nowMs;
+
+  bool connected = (WiFi.status() == WL_CONNECTED);
+  if (connected) {
+    if (!wasConnected) {
+      showToast("WiFi 재연결됨");
+      configTzTime(TZ_INFO, NTP_1, NTP_2, NTP_3);
+    }
+    wasConnected = true;
+    return;
+  }
+
+  if (wasConnected) showToast("WiFi 끊김");
+  wasConnected = false;
+
+  if (lastReconnect == 0 || nowMs - lastReconnect >= 10000) {
+    lastReconnect = nowMs;
+    WiFi.reconnect();
+  }
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -485,7 +581,8 @@ void setup() {
 
   prefs.begin("clock", false);
   use12h     = prefs.getBool("use12h", false);
-  brightMode = prefs.getUChar("bmode", 0);
+  brightMode = prefs.getUChar("bmode", 0) % 4;
+  themeIndex = prefs.getUChar("theme", 0) % THEME_COUNT;
 
   drawScreen("CYD 데스크 시계", "WiFi 연결 중...");
 
@@ -508,6 +605,7 @@ void setup() {
 
 void loop() {
   handleTouch();
+  maintainWiFi();
 
   static uint32_t lastBright = 0;
   if (millis() - lastBright >= 100) {
