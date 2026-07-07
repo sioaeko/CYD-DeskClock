@@ -398,8 +398,8 @@ static void renderClockFace(GFX& g,
   const int barFullW = max(80, w - marginX * 2);
   const int topY    = max(18, h * 9 / 100);    // 상단 첫 줄
   const int top2Y   = topY + 27;               // 상단 둘째 줄 (날씨 설명)
-  const int timeY   = h * 47 / 100;            // 큰 시간 세로 중심
-  const int barY    = h * 77 / 100;
+  const int timeY   = h * 46 / 100;            // 큰 시간 세로 중심
+  const int barY    = h * 74 / 100;
   const int statusY = h - 16;
 
   drawThemedBackground(g, theme, w, h);
@@ -411,7 +411,7 @@ static void renderClockFace(GFX& g,
   int ampmSpace = (use12h && timeValid) ? 60 : 0;   // 오른쪽 '오후' 라벨 공간
   int x0 = cx - (timeW + ampmSpace) / 2;
   x0 = constrain(x0, timeMargin, w - timeMargin - timeW - ampmSpace);
-  const int timeBaseline = timeY + 34;              // 시간 글자 밑선(baseline)
+  const int timeBaseline = timeY + 27;              // 시간 글자 밑선(baseline, 78px 기준)
   g.setTextDatum(textdatum_t::middle_left);
   g.setTextColor(TC(theme.fg));
   g.drawString(hh, x0, timeY);
