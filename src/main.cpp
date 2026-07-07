@@ -5,6 +5,7 @@
  *  - WiFiManager 캡티브 포털로 WiFi 설정 (핫스팟: CYD-Clock)
  *  - NTP 시간 동기화 (한국 표준시), 이후 자동 재동기화
  *  - 큰 시계 + 한글 날짜/요일 + 초 진행 바
+ *  - 날씨/기온/습도 표시 (Open-Meteo, 무료·API 키 불필요, IP 기반 위치 자동)
  *  - 조도센서(LDR) 자동 밝기 조절
  *  - 터치: 왼쪽 탭 = 12/24시간제 전환, 가운데 탭 = 테마 변경, 오른쪽 탭 = 밝기 모드 전환,
  *          5초 길게 누르기 = WiFi 설정 초기화
@@ -13,8 +14,11 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <Preferences.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <time.h>
 #include <sys/time.h>
+#include <math.h>
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -27,6 +31,10 @@ static const char* NTP_3   = "pool.ntp.org";
 static const char* AP_NAME = "CYD-Clock";        // 최초 WiFi 설정용 핫스팟 이름
 static const char* HOSTNAME = "cyd-clock";
 static const uint8_t CLOCK_ROTATION = 6;         // TPM408/CYD v2 가로 방향. 뒤집히면 4로 변경.
+
+// 날씨: 기본은 IP 기반 자동 위치. 특정 좌표로 고정하려면 값을 넣으세요 (예: 서울 37.5665, 126.9780).
+static float MANUAL_LAT = 0.0f;                  // 0 = 자동
+static float MANUAL_LON = 0.0f;
 
 // 화면 색이 반전되어 보이는 CYD 변종(배경이 하얗게 나옴)이라면 true 로 바꾸세요.
 #define PANEL_INVERT false
@@ -158,9 +166,18 @@ static float    ldrEma        = 2000.0f;
 static int      curBrightness = -1;
 static char     toastMsg[64]  = "";
 static uint32_t toastUntil    = 0;
-static char     lastSig[256]  = "";
+static char     lastSig[320]  = "";
 
 static const char* WEEKDAY_KR[7] = { "일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일" };
+
+// 날씨 상태 (백그라운드 태스크가 갱신, 화면 루프가 읽음)
+static volatile bool  weatherValid = false;
+static volatile float weatherTemp  = 0.0f;
+static volatile int   weatherHum   = 0;
+static volatile int   weatherCode  = -1;
+static char           weatherCity[24] = "";
+static float          geoLat = 0.0f, geoLon = 0.0f;
+static bool           geoResolved = false;
 
 // 색상 (RGB888)
 static inline uint32_t C(uint8_t r, uint8_t g, uint8_t b) { return lgfx::color888(r, g, b); }
@@ -182,19 +199,104 @@ static void drawWifiIcon(GFX& g, int x, int y, uint32_t col) {
   g.fillArc(x, y, 11, 9, 225, 315, col);
 }
 
+static const char* weatherLabel(int code) {
+  switch (code) {
+    case 0:  return "맑음";
+    case 1:  return "대체로 맑음";
+    case 2:  return "구름 조금";
+    case 3:  return "흐림";
+    case 45: case 48: return "안개";
+    case 51: case 53: case 55: return "이슬비";
+    case 56: case 57: return "어는 이슬비";
+    case 61: return "약한 비"; case 63: return "비"; case 65: return "강한 비";
+    case 66: case 67: return "어는 비";
+    case 71: return "약한 눈"; case 73: return "눈"; case 75: return "강한 눈";
+    case 77: return "싸락눈";
+    case 80: case 81: return "소나기"; case 82: return "강한 소나기";
+    case 85: case 86: return "눈 소나기";
+    case 95: return "뇌우"; case 96: case 99: return "우박 뇌우";
+    default: return "";
+  }
+}
+
+template <typename GFX>
+static void drawCloudShape(GFX& g, int x, int y, uint32_t col) {
+  g.fillCircle(x - 6, y + 2, 5, col);
+  g.fillCircle(x + 6, y + 3, 5, col);
+  g.fillCircle(x - 1, y - 3, 7, col);
+  g.fillRoundRect(x - 10, y + 2, 21, 6, 3, col);
+}
+
+template <typename GFX>
+static void drawSun(GFX& g, int x, int y, int r, uint32_t col) {
+  g.fillCircle(x, y, r, col);
+  const float dx[8] = { 1, 0.7f, 0, -0.7f, -1, -0.7f, 0, 0.7f };
+  const float dy[8] = { 0, 0.7f, 1, 0.7f, 0, -0.7f, -1, -0.7f };
+  for (int i = 0; i < 8; i++) {
+    g.drawLine(x + (int)(dx[i] * (r + 2)), y + (int)(dy[i] * (r + 2)),
+               x + (int)(dx[i] * (r + 5)), y + (int)(dy[i] * (r + 5)), col);
+  }
+}
+
+// WMO 날씨 코드를 아이콘으로. code < 0 이면 아직 데이터 없음.
+template <typename GFX>
+static void drawWeatherIcon(GFX& g, int x, int y, int code, const Theme& theme) {
+  const uint32_t sun   = C(255, 200, 60);
+  const uint32_t cloud = C(205, 214, 228);
+  const uint32_t rain  = TC(theme.accent);
+  const uint32_t snow  = C(225, 238, 255);
+  const uint32_t bolt  = C(255, 210, 70);
+  if (code < 0) { g.drawCircle(x, y, 9, TC(theme.faint)); return; }
+
+  int cat;
+  if (code == 0) cat = 0;
+  else if (code == 1 || code == 2) cat = 1;
+  else if (code == 3) cat = 2;
+  else if (code == 45 || code == 48) cat = 3;
+  else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) cat = 4;
+  else if ((code >= 71 && code <= 77) || code == 85 || code == 86) cat = 5;
+  else if (code >= 95) cat = 6;
+  else cat = 2;
+
+  switch (cat) {
+    case 0:
+      drawSun(g, x, y, 7, sun);
+      break;
+    case 1:
+      drawSun(g, x - 4, y - 4, 5, sun);
+      drawCloudShape(g, x + 2, y + 3, cloud);
+      break;
+    case 2:
+      drawCloudShape(g, x, y, cloud);
+      break;
+    case 3:
+      drawCloudShape(g, x, y - 2, cloud);
+      for (int i = 0; i < 3; i++) g.drawFastHLine(x - 9, y + 8 + i * 3, 18, TC(theme.muted));
+      break;
+    case 4:
+      drawCloudShape(g, x, y - 2, cloud);
+      for (int i = -1; i <= 1; i++) g.drawLine(x + i * 6, y + 7, x + i * 6 - 2, y + 12, rain);
+      break;
+    case 5:
+      drawCloudShape(g, x, y - 2, cloud);
+      for (int i = -1; i <= 1; i++) g.fillCircle(x + i * 6, y + 10, 1, snow);
+      break;
+    case 6:
+      drawCloudShape(g, x, y - 2, cloud);
+      g.fillTriangle(x - 1, y + 6, x + 3, y + 6, x - 2, y + 12, bolt);
+      g.fillTriangle(x + 2, y + 8, x - 2, y + 14, x + 3, y + 8, bolt);
+      break;
+  }
+}
+
 template <typename GFX>
 static void drawThemedBackground(GFX& g, const Theme& theme, int w, int h) {
-  const int bandH = 8;
+  const int bandH = 4;
   for (int y = 0; y < h; y += bandH) {
     g.fillRect(0, y, w, bandH, blendColor(theme.bgTop, theme.bgBottom, y, h));
   }
-
-  // Subtle structure so the display reads as a clock face, not a plain black panel.
+  // 얇은 상단 강조선 하나만 — 나머지는 여백으로 비워 깔끔하게.
   g.fillRect(0, 0, w, 2, TC(theme.accent));
-  g.fillRect(0, h - 1, w, 1, TC(theme.faint));
-  for (int y = 44; y < h - 28; y += 28) {
-    g.fillRect(18, y, w - 36, 1, blendColor(theme.panel, theme.bgBottom, y, h));
-  }
 }
 
 static void setLandscapeRotation() {
@@ -256,27 +358,42 @@ static void renderClockFace(GFX& g,
   const int cx = w / 2;
   const int marginX = max(16, w / 16);
   const int barFullW = max(80, w - marginX * 2);
-  const int dateY = max(9, h * 6 / 100);
-  const int timeY = h * 47 / 100;
-  const int barY = h * 71 / 100;
-  const int statusY = h - 18;
+  const int topY   = max(14, h * 9 / 100);
+  const int timeY  = h * 48 / 100;
+  const int barY   = h * 80 / 100;
+  const int statusY = h - 16;
 
   drawThemedBackground(g, theme, w, h);
 
-  const int panelX = max(8, marginX - 8);
-  const int panelY = timeY - 58;
-  const int panelW = w - panelX * 2;
-  const int panelH = 112;
-  g.fillRoundRect(panelX, panelY, panelW, panelH, 10, TC(theme.panel));
-  g.drawRoundRect(panelX, panelY, panelW, panelH, 10, TC(theme.faint));
-
-  // 날짜 (상단)
-  g.setFont(&fonts::efontKR_24);
-  g.setTextDatum(textdatum_t::top_center);
+  // ── 상단 좌: 날짜 ──
+  g.setFont(&fonts::efontKR_16);
+  g.setTextDatum(textdatum_t::middle_left);
   g.setTextColor(TC(theme.muted));
-  g.drawString(dateStr, cx, dateY);
+  g.drawString(dateStr, marginX, topY);
 
-  // 시간 (중앙, 콜론은 숨쉬듯 깜빡임)
+  // ── 상단 우: 날씨(아이콘 + 기온), 그 아래 날씨 설명 ──
+  {
+    char tempStr[10];
+    if (weatherValid) snprintf(tempStr, sizeof(tempStr), "%d", (int)lroundf(weatherTemp));
+    else              strcpy(tempStr, "--");
+    const int rightX = w - marginX;
+    const int degR = 3;
+    g.setFont(&fonts::efontKR_24);
+    int tw = g.textWidth(tempStr);
+    int tempRight = rightX - (degR * 2 + 2);
+    g.setTextDatum(textdatum_t::middle_right);
+    g.setTextColor(TC(theme.fg));
+    g.drawString(tempStr, tempRight, topY);
+    g.drawCircle(rightX - degR, topY - 8, degR, TC(theme.fg));   // 도(°) 기호
+    drawWeatherIcon(g, tempRight - tw - 16, topY, weatherValid ? weatherCode : -1, theme);
+
+    g.setFont(&fonts::efontKR_16);
+    g.setTextDatum(textdatum_t::middle_right);
+    g.setTextColor(TC(theme.muted));
+    g.drawString(weatherValid ? weatherLabel(weatherCode) : "날씨 불러오는 중", rightX, topY + 22);
+  }
+
+  // ── 중앙: 시간 (콜론은 숨쉬듯 깜빡임) ──
   g.setFont(&fonts::Font8);
   int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
   int x0 = cx - (wH + wC + wM) / 2;
@@ -296,23 +413,21 @@ static void renderClockFace(GFX& g,
   if (use12h && timeValid) {
     g.setFont(&fonts::efontKR_16);
     g.setTextDatum(textdatum_t::middle_left);
-    int ampmX = min(w - marginX - 42, x0 + wH + wC + wM + 10);
-    int ampmW = g.textWidth(ampm) + 14;
-    g.fillRoundRect(ampmX - 7, timeY + 8, ampmW, 22, 7, blendColor(theme.panel, theme.bgBottom, 160, 240));
+    int ampmX = min(w - marginX - 40, x0 + wH + wC + wM + 12);
     g.setTextColor(TC(theme.accent));
-    g.drawString(ampm, ampmX, timeY + 20);
+    g.drawString(ampm, ampmX, timeY + 22);
   }
 
-  // 초 진행 바
+  // ── 초 진행 바 ──
   int safeBarW = constrain(barW, 0, barFullW);
-  g.fillRoundRect(marginX, barY, barFullW, 7, 3, TC(theme.faint));
+  g.fillRoundRect(marginX, barY, barFullW, 6, 3, TC(theme.faint));
   if (safeBarW > 0) {
-    if (safeBarW > 6) g.fillRoundRect(marginX, barY, safeBarW, 7, 3, TC(theme.accent));
-    else              g.fillRect(marginX, barY, safeBarW, 7, TC(theme.accent));
+    if (safeBarW > 6) g.fillRoundRect(marginX, barY, safeBarW, 6, 3, TC(theme.accent));
+    else              g.fillRect(marginX, barY, safeBarW, 6, TC(theme.accent));
     g.fillCircle(marginX + safeBarW, barY + 3, 3, TC(theme.accent2));
   }
 
-  // 하단 상태줄 / 토스트
+  // ── 하단 상태 / 토스트 ──
   g.setFont(&fonts::efontKR_16);
   if (toastOn) {
     g.setTextDatum(textdatum_t::middle_center);
@@ -321,7 +436,7 @@ static void renderClockFace(GFX& g,
     g.setTextColor(TC(theme.warn));
     g.drawString(toastMsg, cx, statusY);
   } else {
-    drawWifiIcon(g, marginX + 4, statusY + 4, wifiOk ? TC(theme.accent) : TC(theme.faint));
+    drawWifiIcon(g, marginX + 4, statusY + 3, wifiOk ? TC(theme.accent) : TC(theme.faint));
     g.setTextDatum(textdatum_t::middle_left);
     g.setTextColor(TC(theme.muted));
     g.drawString(statusL, marginX + 22, statusY);
@@ -367,19 +482,27 @@ static void drawClockFrame() {
   }
 
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
-  if (wifiOk) snprintf(statusL, sizeof(statusL), "WiFi %ddBm", WiFi.RSSI());
-  else        snprintf(statusL, sizeof(statusL), "WiFi 재연결");
-  int brightPct = (curBrightness >= 0) ? (curBrightness * 100 + 127) / 255 : 0;
-  snprintf(statusR, sizeof(statusR), "%s %s %d%%", THEMES[themeIndex % THEME_COUNT].name, BRIGHT_NAME[brightMode], brightPct);
+  // 하단 좌: 날씨가 있으면 도시·습도, 없으면 WiFi 상태
+  if (weatherValid) {
+    if (weatherCity[0]) snprintf(statusL, sizeof(statusL), "%s · 습도 %d%%", weatherCity, weatherHum);
+    else                snprintf(statusL, sizeof(statusL), "습도 %d%%", weatherHum);
+  } else if (wifiOk) {
+    snprintf(statusL, sizeof(statusL), "WiFi %ddBm", WiFi.RSSI());
+  } else {
+    snprintf(statusL, sizeof(statusL), "WiFi 재연결");
+  }
+  // 하단 우: 테마 · 밝기 모드
+  snprintf(statusR, sizeof(statusR), "%s · %s", THEMES[themeIndex % THEME_COUNT].name, BRIGHT_NAME[brightMode]);
 
   bool colonOn = (subMs < 600);
   int  barW    = timeValid ? (int)((t.tm_sec * 1000 + subMs) * (long)barFullW / 60000L) : 0;
   bool toastOn = (millis() < toastUntil) && toastMsg[0];
 
   // 바뀐 게 없으면 다시 그리지 않음
-  char sig[256];
-  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d|%d|%d|%d",
-           hh, mm, colonOn, barW, dateStr, statusL, statusR, wifiOk, toastOn ? toastMsg : "", (int)use12h, themeIndex, w, h);
+  char sig[320];
+  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d|%d|%d|%d|%d|%d|%d|%d",
+           hh, mm, colonOn, barW, dateStr, statusL, statusR, wifiOk, toastOn ? toastMsg : "", (int)use12h, themeIndex, w, h,
+           (int)weatherValid, (int)lroundf(weatherTemp), weatherHum, weatherCode);
   if (strcmp(sig, lastSig) == 0) return;
   strlcpy(lastSig, sig, sizeof(lastSig));
 
@@ -558,6 +681,103 @@ static void maintainWiFi() {
   }
 }
 
+// ================= 날씨 가져오기 =================
+// JSON에서 "key":숫자 형태의 값을 뽑아냅니다 (경량 파서, ArduinoJson 의존성 없음).
+static bool jsonNumber(const String& body, const char* key, float& out) {
+  String pat = String("\"") + key + "\":";
+  int i = body.indexOf(pat);
+  if (i < 0) return false;
+  i += pat.length();
+  while (i < (int)body.length() && body[i] == ' ') i++;
+  int j = i;
+  while (j < (int)body.length()) {
+    char c = body[j];
+    if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E') j++;
+    else break;
+  }
+  if (j == i) return false;
+  out = body.substring(i, j).toFloat();
+  return true;
+}
+
+// JSON에서 "key":"문자열" 값을 뽑아냅니다.
+static bool jsonString(const String& body, const char* key, char* out, size_t n) {
+  String pat = String("\"") + key + "\":\"";
+  int i = body.indexOf(pat);
+  if (i < 0) return false;
+  i += pat.length();
+  int j = body.indexOf('"', i);
+  if (j < 0) return false;
+  strlcpy(out, body.substring(i, j).c_str(), n);
+  return true;
+}
+
+// 위치 결정: 수동 좌표가 있으면 사용, 없으면 IP 기반(ip-api.com, 무료·HTTP)으로 1회 조회.
+static bool resolveLocation() {
+  if (geoResolved) return true;
+  if (MANUAL_LAT != 0.0f || MANUAL_LON != 0.0f) {
+    geoLat = MANUAL_LAT; geoLon = MANUAL_LON; geoResolved = true;
+    return true;
+  }
+  HTTPClient http;
+  http.setConnectTimeout(8000);
+  http.setTimeout(8000);
+  if (!http.begin("http://ip-api.com/json/?fields=status,lat,lon,city")) return false;
+  bool ok = false;
+  if (http.GET() == 200) {
+    String body = http.getString();
+    float la, lo;
+    if (jsonNumber(body, "lat", la) && jsonNumber(body, "lon", lo)) {
+      geoLat = la; geoLon = lo;
+      jsonString(body, "city", weatherCity, sizeof(weatherCity));
+      geoResolved = true;
+      ok = true;
+    }
+  }
+  http.end();
+  return ok;
+}
+
+// Open-Meteo(무료·API 키 불필요)에서 현재 기온/습도/날씨코드를 가져옵니다.
+static void fetchWeather() {
+  if (!resolveLocation()) return;
+  WiFiClientSecure client;
+  client.setInsecure();                  // 취미용 시계: 인증서 검증 생략
+  HTTPClient http;
+  http.setConnectTimeout(10000);
+  http.setTimeout(10000);
+  char url[220];
+  snprintf(url, sizeof(url),
+           "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+           "&current=temperature_2m,relative_humidity_2m,weather_code&timezone=auto",
+           geoLat, geoLon);
+  if (!http.begin(client, url)) return;
+  if (http.GET() == 200) {
+    String body = http.getString();
+    int ci = body.indexOf("\"current\"");
+    String seg = (ci >= 0) ? body.substring(ci) : body;
+    float temp, hum, wc;
+    if (jsonNumber(seg, "temperature_2m", temp) &&
+        jsonNumber(seg, "relative_humidity_2m", hum) &&
+        jsonNumber(seg, "weather_code", wc)) {
+      weatherTemp  = temp;
+      weatherHum   = (int)lroundf(hum);
+      weatherCode  = (int)wc;
+      weatherValid = true;
+    }
+  }
+  http.end();
+}
+
+// 백그라운드 태스크(코어 0): 시계 렌더링(코어 1)을 막지 않고 주기적으로 갱신.
+static void weatherTask(void*) {
+  vTaskDelay(pdMS_TO_TICKS(2500));
+  for (;;) {
+    if (WiFi.status() == WL_CONNECTED) fetchWeather();
+    vTaskDelay(pdMS_TO_TICKS(weatherValid ? 15UL * 60UL * 1000UL : 60UL * 1000UL));
+  }
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -600,6 +820,10 @@ void setup() {
     if (t.tm_year + 1900 >= 2020) break;
     delay(200);
   }
+
+  // 날씨 갱신을 백그라운드 코어에서 실행 (시계 렌더링이 끊기지 않도록)
+  xTaskCreatePinnedToCore(weatherTask, "weather", 8192, nullptr, 1, nullptr, 0);
+
   lastSig[0] = '\0';
 }
 
