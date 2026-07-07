@@ -818,7 +818,7 @@ static bool geocodePlace(const String& name) {
       float la, lo;
       if (jsonNumber(seg, "latitude", la) && jsonNumber(seg, "longitude", lo)) {
         geoLat = la; geoLon = lo;
-        // 도시명 (없으면 입력값), 앞에 광역시/도(admin1)가 있으면 "경상북도 경산"처럼 결합
+        // 도시명 (없으면 입력값), 앞에 광역시/도(admin1)가 있으면 "서울특별시 서울"처럼 결합
         char cityName[32] = "";
         if (!jsonString(seg, "name", cityName, sizeof(cityName)))
           strlcpy(cityName, name.c_str(), sizeof(cityName));
