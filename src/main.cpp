@@ -149,8 +149,10 @@ static bool wifiHintAdded = false;
 static bool    use12h     = false;
 static uint8_t brightMode = 0;              // 0=자동 1=최대 2=중간 3=최소
 static uint8_t themeIndex = 0;
+static uint8_t nightMode  = 0;              // 0=끔 1=자동(밤) 2=항상 켬
 static const uint8_t BRIGHT_FIXED[4] = { 0, 255, 110, 25 };
 static const char*   BRIGHT_NAME[4]  = { "자동", "최대", "중간", "최소" };
+static const int NIGHT_BRIGHTNESS = 6;      // 야간 모드 백라이트 (아주 어둡게)
 
 struct Theme {
   const char* name;
@@ -168,6 +170,24 @@ static const Theme THEMES[] = {
   { "로즈", { 26, 10, 16 }, { 4, 0, 3 }, { 28, 12, 18 }, { 255, 238, 244 }, { 198, 150, 166 }, { 112, 72, 88 }, { 255, 90, 140 }, { 255, 150, 180 }, { 255, 210, 130 } },
 };
 static const uint8_t THEME_COUNT = sizeof(THEMES) / sizeof(THEMES[0]);
+
+// 야간 모드 전용 테마: 눈부심 없는 어두운 적색(암순응에 유리).
+static const Theme NIGHT_THEME =
+  { "야간", { 8, 1, 0 }, { 0, 0, 0 }, { 14, 3, 2 }, { 200, 66, 42 }, { 128, 44, 30 }, { 58, 20, 14 }, { 220, 74, 48 }, { 150, 52, 36 }, { 210, 84, 44 } };
+
+// 야간 모드가 지금 활성인가? (1=항상, 2=밤 시간대 22시~07시)
+static bool nightActive() {
+  if (nightMode == 2) return true;
+  if (nightMode == 1) {
+    time_t now = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    if (t.tm_year + 1900 < 2020) return false;   // 아직 시간 동기화 전
+    int hh = t.tm_hour;
+    return (hh >= 22 || hh < 7);
+  }
+  return false;
+}
 
 static float    ldrEma        = 2000.0f;
 static int      curBrightness = -1;
@@ -361,7 +381,7 @@ static void renderClockFace(GFX& g,
                             int barW,
                             bool wifiOk,
                             bool toastOn) {
-  const Theme& theme = THEMES[themeIndex % THEME_COUNT];
+  const Theme& theme = nightActive() ? NIGHT_THEME : THEMES[themeIndex % THEME_COUNT];
   const int w = screenW;
   const int h = screenH;
   const int cx = w / 2;
@@ -387,13 +407,13 @@ static void renderClockFace(GFX& g,
     else              strcpy(tempStr, "--");
     const int rightX = w - marginX;
     const int degR = 3;
-    g.setFont(&fonts::efontKR_24);
+    g.setFont(&fonts::FreeSansBold18pt7b);
     int tw = g.textWidth(tempStr);
     int tempRight = rightX - (degR * 2 + 2);
     g.setTextDatum(textdatum_t::middle_right);
     g.setTextColor(TC(theme.fg));
     g.drawString(tempStr, tempRight, topY);
-    g.drawCircle(rightX - degR, topY - 8, degR, TC(theme.fg));   // 도(°) 기호
+    g.drawCircle(rightX - degR, topY - 9, degR, TC(theme.fg));   // 도(°) 기호
     drawWeatherIcon(g, tempRight - tw - 16, topY, weatherValid ? weatherCode : -1, theme);
 
     // 날씨 설명 (기온 아래, 우측 정렬)
@@ -403,15 +423,11 @@ static void renderClockFace(GFX& g,
     g.drawString(weatherValid ? weatherLabel(weatherCode) : "불러오는 중", rightX, topY + 24);
   }
 
-  // ── 중앙: 시간 (콜론은 숨쉬듯 깜빡임) ──
-  g.setFont(&fonts::Font8);
+  // ── 중앙: 시간 (안티에일리어스 고딕, 콜론은 숨쉬듯 깜빡임) ──
+  g.setFont(&fonts::lgfxJapanGothic_40);
   int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
   int x0 = cx - (wH + wC + wM) / 2;
   g.setTextDatum(textdatum_t::middle_left);
-  g.setTextColor(TC(theme.faint));
-  g.drawString(hh, x0 + 2, timeY + 3);
-  g.drawString(":", x0 + wH + 2, timeY + 3);
-  g.drawString(mm, x0 + wH + wC + 2, timeY + 3);
   g.setTextColor(TC(theme.fg));
   g.drawString(hh, x0, timeY);
   g.setTextColor(colonOn ? TC(theme.fg) : TC(theme.faint));
@@ -510,9 +526,9 @@ static void drawClockFrame() {
 
   // 바뀐 게 없으면 다시 그리지 않음
   char sig[320];
-  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d|%d|%d|%d|%d|%d|%d|%d",
+  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d|%d|%d|%d|%d|%d|%d|%d|%d",
            hh, mm, colonOn, barW, dateStr, statusL, statusR, wifiOk, toastOn ? toastMsg : "", (int)use12h, themeIndex, w, h,
-           (int)weatherValid, (int)lroundf(weatherTemp), weatherHum, weatherCode);
+           (int)weatherValid, (int)lroundf(weatherTemp), weatherHum, weatherCode, (int)nightActive());
   if (strcmp(sig, lastSig) == 0) return;
   strlcpy(lastSig, sig, sizeof(lastSig));
 
@@ -530,7 +546,9 @@ static void drawClockFrame() {
 // ================= 밝기 =================
 static void updateBrightness() {
   int target;
-  if (brightMode == 0) {
+  if (nightActive()) {
+    target = NIGHT_BRIGHTNESS;              // 야간: 밝기 모드와 무관하게 아주 어둡게
+  } else if (brightMode == 0) {
     int raw = analogRead(PIN_LDR);
     ldrEma += (raw - ldrEma) * 0.1f;
     float dark = LDR_BRIGHT_IS_LOW
@@ -563,6 +581,15 @@ static void applyUse12h(bool v, bool toast) {
   use12h = v;
   prefs.putBool("use12h", use12h);
   if (toast) showToast(use12h ? "12시간제" : "24시간제");
+}
+static void applyNight(uint8_t m, bool toast) {
+  nightMode = (uint8_t)(m % 3);
+  prefs.putUChar("night", nightMode);
+  curBrightness = -1;  // 밝기 즉시 재계산
+  if (toast) {
+    static const char* n[3] = { "야간 모드: 끔", "야간 모드: 자동(밤)", "야간 모드: 켬" };
+    showToast(n[nightMode]);
+  }
 }
 
 // ================= 터치 =================
@@ -902,6 +929,7 @@ h1{font-size:22px;font-weight:800;text-align:center}
 .locrow{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
 .locrow .cur{color:var(--muted);font-size:14px}
 .locrow button.ghost{background:transparent;border:1px solid var(--edge);color:var(--muted);font-weight:600;padding:8px 14px}
+.hint{color:#6b7484;font-size:12px;margin-top:8px;line-height:1.45}
 .foot{text-align:center;color:#5a6270;font-size:12px;margin-top:30px}
 </style></head><body><div class=wrap>
 <h1>CYD 데스크 시계</h1><div class=sub>같은 WiFi에서 실시간으로 조작하세요</div>
@@ -909,6 +937,9 @@ h1{font-size:22px;font-weight:800;text-align:center}
 <div class=sec><h2>밝기</h2><div class=seg id=bright></div></div>
 <div class=sec><h2>시간 표시</h2><div class=seg id=h12>
 <button data-h=0>24시간제</button><button data-h=1>12시간제</button></div></div>
+<div class=sec><h2>야간 모드</h2><div class=seg id=night>
+<button data-n=0>끔</button><button data-n=1>자동(밤)</button><button data-n=2>켬</button></div>
+<div class=hint>자동은 밤 22시~오전 7시에 화면을 아주 어둡게, 눈부심 없는 붉은 톤으로 바꿉니다.</div></div>
 <div class=sec><h2>지역 (날씨)</h2>
 <div class=loc><input id=place placeholder="도시 이름 (예: 서울, 부산, Tokyo)" autocomplete=off><button id=applyloc>적용</button></div>
 <div class=locrow><span class=cur id=curloc>—</span><button class=ghost id=autoloc>자동(IP)</button></div>
@@ -926,6 +957,7 @@ function render(S){
  const B=document.getElementById('bright');B.innerHTML='';
  S.brightNames.forEach((n,i)=>{const b=document.createElement('button');b.textContent=n;if(i==S.bright)b.className='on';b.onclick=()=>set('bright='+i);B.appendChild(b)});
  document.querySelectorAll('#h12 button').forEach(b=>{b.classList.toggle('on',(+b.dataset.h)==S.h12);b.onclick=()=>set('h12='+b.dataset.h)});
+ document.querySelectorAll('#night button').forEach(b=>{b.classList.toggle('on',(+b.dataset.n)==S.night);b.onclick=()=>set('night='+b.dataset.n)});
  document.getElementById('curloc').textContent=S.city?('현재: '+S.city+(S.auto?' · 자동':' · 지정')):(S.auto?'자동(IP)으로 감지 중':'—');
 }
 function applyPlace(){const v=document.getElementById('place').value.trim();if(v){document.getElementById('curloc').textContent='검색 중…';set('place='+encodeURIComponent(v));document.getElementById('place').value=''}}
@@ -953,7 +985,8 @@ static void sendState() {
     if (i) j += ",";
     j += "{\"n\":\"" + String(THEMES[i].name) + "\",\"bg\":\"" + bg + "\",\"fg\":\"" + fg + "\",\"ac\":\"" + ac + "\"}";
   }
-  j += "],\"city\":\"" + String(weatherCity) + "\",\"auto\":" + String(locManual ? 0 : 1) + "}";
+  j += "],\"night\":" + String(nightMode) +
+       ",\"city\":\"" + String(weatherCity) + "\",\"auto\":" + String(locManual ? 0 : 1) + "}";
   server.send(200, "application/json; charset=utf-8", j);
 }
 
@@ -961,6 +994,7 @@ static void handleSet() {
   if (server.hasArg("theme"))  applyTheme((uint8_t)server.arg("theme").toInt(), true);
   if (server.hasArg("bright")) applyBright((uint8_t)server.arg("bright").toInt(), true);
   if (server.hasArg("h12"))    applyUse12h(server.arg("h12").toInt() != 0, true);
+  if (server.hasArg("night"))  applyNight((uint8_t)server.arg("night").toInt(), true);
   if (server.hasArg("place")) {
     String p = server.arg("place"); p.trim();
     if (p.length()) {
@@ -1014,6 +1048,7 @@ void setup() {
   use12h     = prefs.getBool("use12h", false);
   brightMode = prefs.getUChar("bmode", 0) % 4;
   themeIndex = prefs.getUChar("theme", 0) % THEME_COUNT;
+  nightMode  = prefs.getUChar("night", 0) % 3;
 
   // 저장된 지역(수동 위치) 복원
   locManual = prefs.getBool("locman", false);

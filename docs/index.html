@@ -250,7 +250,7 @@
   <header class="hero">
     <span class="badge"><span class="dot"></span>ESP32-2432S028R · Cheap Yellow Display</span>
     <h1>책상 위, 가장 깔끔한 시계</h1>
-    <p class="sub">CYD를 <b>미니멀 NTP 탁상시계</b>로 — 날씨·기온·습도, 테마 8종, 자동 밝기까지. 설치 후 폰으로 테마도 바꿉니다.</p>
+    <p class="sub">CYD를 <b>미니멀 NTP 탁상시계</b>로 — 날씨·기온·습도, 테마 8종, 야간 모드까지. 부드러운 글꼴, 폰으로 실시간 설정.</p>
 
     <div class="stage">
       <div class="glow"></div>
@@ -278,7 +278,7 @@
     <h2>1분 설치</h2>
     <p class="desc">CYD를 USB로 연결하고 버튼을 누르면 끝. 앱도, 개발 환경도 필요 없습니다.</p>
 
-    <esp-web-install-button manifest="./manifest.json?v=1.3.0">
+    <esp-web-install-button manifest="./manifest.json?v=1.4.0">
       <button slot="activate" class="btn-flash">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         기기에 설치하기
@@ -316,13 +316,13 @@
       </div>
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg></div>
-        <b>테마 8종 · 자동 밝기</b>
-        <p>네온·앰버·포레스트·모노·오션·선셋·자수정·로즈 중에 고르고, 방 밝기에 맞춰 백라이트를 조절합니다.</p>
+        <b>테마 8종 · 야간 모드</b>
+        <p>네온·앰버·포레스트·모노·오션·선셋·자수정·로즈 테마. 밤에는 자동으로 눈부심 없는 어두운 붉은 화면(야간 모드)으로 전환됩니다.</p>
       </div>
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2.5"/><path d="M11 18h2"/></svg></div>
         <b>폰으로 실시간 설정</b>
-        <p>같은 WiFi에서 <kbd>cyd-clock.local</kbd>에 접속하면 테마·밝기·시간표시·<b>지역</b>을 웹에서 바로 바꿉니다. 변경은 즉시 반영되고 저장됩니다.</p>
+        <p>같은 WiFi에서 <kbd>cyd-clock.local</kbd>에 접속하면 테마·밝기·시간표시·<b>야간 모드</b>·<b>지역</b>을 웹에서 바로 바꿉니다. 즉시 반영·저장됩니다.</p>
       </div>
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="m7 15-1.76-1.76a2 2 0 0 0-2.83 2.82l3.6 3.6C7.5 21.14 9.2 22 12 22h2a8 8 0 0 0 8-8V7a2 2 0 0 0-4 0v5"/></svg></div>
@@ -384,7 +384,7 @@
   </section>
 
   <footer>
-    CYD Desk Clock v1.3.0 · ESP Web Tools · 소스는 <code>src/main.cpp</code> · made with <span class="heart">Claude Fable 5</span>
+    CYD Desk Clock v1.4.0 · ESP Web Tools · 소스는 <code>src/main.cpp</code> · made with <span class="heart">Claude Fable 5</span>
   </footer>
 </div>
 
