@@ -325,8 +325,6 @@ static void drawThemedBackground(GFX& g, const Theme& theme, int w, int h) {
   for (int y = 0; y < h; y += bandH) {
     g.fillRect(0, y, w, bandH, blendColor(theme.bgTop, theme.bgBottom, y, h));
   }
-  // 얇은 상단 강조선 하나만 — 나머지는 여백으로 비워 깔끔하게.
-  g.fillRect(0, 0, w, 2, TC(theme.accent));
 }
 
 static void setLandscapeRotation() {
