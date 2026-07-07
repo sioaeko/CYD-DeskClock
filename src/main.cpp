@@ -24,7 +24,8 @@
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
-#include "timefont.h"   // 대형 안티에일리어스 숫자 폰트 (시계용)
+#include "timefont.h"    // 대형 안티에일리어스 숫자 폰트 (시계용)
+#include "labelfont.h"   // 안티에일리어스 한글/숫자 라벨 폰트 (날짜·날씨·습도)
 
 // ================= 사용자 설정 =================
 static const char* TZ_INFO = "KST-9";            // 한국 표준시 (변경: https://gist.github.com/alwynallan/24d96091655391107939 참고)
@@ -203,7 +204,7 @@ static volatile bool  weatherValid = false;
 static volatile float weatherTemp  = 0.0f;
 static volatile int   weatherHum   = 0;
 static volatile int   weatherCode  = -1;
-static char           weatherCity[24] = "";
+static char           weatherCity[48] = "";
 static float          geoLat = 0.0f, geoLon = 0.0f;
 static bool           geoResolved = false;
 static volatile bool  weatherRefresh = false;   // 위치 변경 시 즉시 갱신 요청
@@ -247,6 +248,14 @@ static const char* weatherLabel(int code) {
     case 95: return "뇌우"; case 96: case 99: return "우박 뇌우";
     default: return "";
   }
+}
+
+template <typename GFX>
+static void drawDropIcon(GFX& g, int cx, int cy, uint32_t col) {
+  // 물방울(습도) 아이콘
+  g.fillCircle(cx, cy + 3, 5, col);
+  g.fillTriangle(cx, cy - 7, cx - 5, cy + 3, cx + 5, cy + 3, col);
+  g.fillCircle(cx - 2, cy + 1, 1, C(255, 255, 255));  // 작은 하이라이트
 }
 
 template <typename GFX>
@@ -384,51 +393,25 @@ static void renderClockFace(GFX& g,
   const int w = screenW;
   const int h = screenH;
   const int cx = w / 2;
-  const int marginX = max(16, w / 16);
+  const int marginX = max(20, w / 13);         // 가장자리 여백 (데모처럼 살짝 띄움)
+  const int timeMargin = max(14, w / 22);      // 큰 시간은 더 넓게 써도 됨
   const int barFullW = max(80, w - marginX * 2);
-  const int topY   = max(14, h * 7 / 100);
-  const int timeY  = h * 45 / 100;
-  const int barY   = h * 75 / 100;
-  const int statusY = h - 15;
+  const int topY    = max(18, h * 9 / 100);    // 상단 첫 줄
+  const int top2Y   = topY + 27;               // 상단 둘째 줄 (날씨 설명)
+  const int timeY   = h * 47 / 100;            // 큰 시간 세로 중심
+  const int barY    = h * 77 / 100;
+  const int statusY = h - 16;
 
   drawThemedBackground(g, theme, w, h);
 
-  // ── 상단 좌: 날짜 ──
-  g.setFont(&fonts::efontKR_16);
-  g.setTextDatum(textdatum_t::middle_left);
-  g.setTextColor(TC(theme.muted));
-  g.drawString(dateStr, marginX, topY);
-
-  // ── 상단 우: 날씨(아이콘 + 기온) ── (설명/습도는 하단 우측에)
-  {
-    char tempStr[10];
-    if (weatherValid) snprintf(tempStr, sizeof(tempStr), "%d", (int)lroundf(weatherTemp));
-    else              strcpy(tempStr, "--");
-    const int rightX = w - marginX;
-    const int degR = 3;
-    g.setFont(&fonts::FreeSansBold18pt7b);
-    int tw = g.textWidth(tempStr);
-    int tempRight = rightX - (degR * 2 + 2);
-    g.setTextDatum(textdatum_t::middle_right);
-    g.setTextColor(TC(theme.fg));
-    g.drawString(tempStr, tempRight, topY);
-    g.drawCircle(rightX - degR, topY - 9, degR, TC(theme.fg));   // 도(°) 기호
-    drawWeatherIcon(g, tempRight - tw - 16, topY, weatherValid ? weatherCode : -1, theme);
-
-    // 날씨 설명 (기온 아래, 우측 정렬)
-    g.setFont(&fonts::efontKR_16);
-    g.setTextDatum(textdatum_t::middle_right);
-    g.setTextColor(TC(theme.muted));
-    g.drawString(weatherValid ? weatherLabel(weatherCode) : "불러오는 중", rightX, topY + 24);
-  }
-
-  // ── 중앙: 시간 (대형 안티에일리어스 숫자, 콜론은 숨쉬듯 깜빡임) ──
+  // ── 중앙: 큰 시간 (콜론은 숨쉬듯 깜빡임) ──
   g.loadFont(timefont_vlw);
   int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
   int timeW = wH + wC + wM;
-  // 12시간제면 오른쪽 '오후' 라벨 폭(약 44px)까지 감안해 전체를 중앙 정렬
-  int ampmSpace = (use12h && timeValid) ? 46 : 0;
+  int ampmSpace = (use12h && timeValid) ? 60 : 0;   // 오른쪽 '오후' 라벨 공간
   int x0 = cx - (timeW + ampmSpace) / 2;
+  x0 = constrain(x0, timeMargin, w - timeMargin - timeW - ampmSpace);
+  const int timeBaseline = timeY + 34;              // 시간 글자 밑선(baseline)
   g.setTextDatum(textdatum_t::middle_left);
   g.setTextColor(TC(theme.fg));
   g.drawString(hh, x0, timeY);
@@ -438,13 +421,50 @@ static void renderClockFace(GFX& g,
   g.drawString(mm, x0 + wH + wC, timeY);
   g.unloadFont();
 
-  // 오전/오후 (12시간제) — 시간 오른쪽, 아래쪽 정렬
+  // ── 라벨(날짜·날씨·오후·습도)은 안티에일리어스 한글 폰트로 ──
+  g.loadFont(labelfont_vlw);
+
+  // 상단 좌: 날짜
+  g.setTextDatum(textdatum_t::middle_left);
+  g.setTextColor(TC(theme.muted));
+  g.drawString(dateStr, marginX, topY);
+
+  // 상단 우: 날씨 아이콘 + 기온, 그 아래 설명
+  {
+    char tempStr[8];
+    if (weatherValid) snprintf(tempStr, sizeof(tempStr), "%d", (int)lroundf(weatherTemp));
+    else              strcpy(tempStr, "--");
+    const int rightX = w - marginX;
+    const int degR = 4;
+    int tw = g.textWidth(tempStr);
+    int tempRight = rightX - (degR * 2 + 3);
+    g.setTextDatum(textdatum_t::middle_right);
+    g.setTextColor(TC(theme.fg));
+    g.drawString(tempStr, tempRight, topY);
+    g.drawCircle(rightX - degR, topY - 8, degR, TC(theme.fg));            // 도(°)
+    g.drawCircle(rightX - degR, topY - 8, degR - 1, TC(theme.fg));
+    drawWeatherIcon(g, tempRight - tw - 20, topY, weatherValid ? weatherCode : -1, theme);
+    g.setTextDatum(textdatum_t::middle_right);
+    g.setTextColor(TC(theme.muted));
+    g.drawString(weatherValid ? weatherLabel(weatherCode) : "불러오는 중", rightX, top2Y);
+  }
+
+  // 오전/오후 (12시간제) — 시간 밑선에 맞춰 오른쪽에
   if (use12h && timeValid) {
-    g.setFont(&fonts::efontKR_16);
     g.setTextDatum(textdatum_t::baseline_left);
     g.setTextColor(TC(theme.accent));
-    g.drawString(ampm, x0 + timeW + 12, timeY + 22);
+    g.drawString(ampm, x0 + timeW + 14, timeBaseline);
   }
+
+  // 하단 우: 물방울 + 습도
+  if (!toastOn && statusR[0]) {
+    g.setTextDatum(textdatum_t::middle_right);
+    g.setTextColor(TC(theme.muted));
+    int hw = g.textWidth(statusR);
+    g.drawString(statusR, w - marginX, statusY);
+    drawDropIcon(g, w - marginX - hw - 11, statusY, TC(theme.accent2));
+  }
+  g.unloadFont();
 
   // ── 초 진행 바 ──
   int safeBarW = constrain(barW, 0, barFullW);
@@ -455,7 +475,7 @@ static void renderClockFace(GFX& g,
     g.fillCircle(marginX + safeBarW, barY + 3, 3, TC(theme.accent2));
   }
 
-  // ── 하단 상태 / 토스트 ──
+  // ── 하단 좌: 지역(임의 한글이라 비트맵 폰트) / 토스트 ──
   g.setFont(&fonts::efontKR_16);
   if (toastOn) {
     g.setTextDatum(textdatum_t::middle_center);
@@ -464,12 +484,9 @@ static void renderClockFace(GFX& g,
     g.setTextColor(TC(theme.warn));
     g.drawString(toastMsg, cx, statusY);
   } else {
-    drawWifiIcon(g, marginX + 4, statusY + 3, wifiOk ? TC(theme.accent) : TC(theme.faint));
     g.setTextDatum(textdatum_t::middle_left);
     g.setTextColor(TC(theme.muted));
-    g.drawString(statusL, marginX + 22, statusY);
-    g.setTextDatum(textdatum_t::middle_right);
-    g.drawString(statusR, w - marginX, statusY);
+    g.drawString(statusL, marginX, statusY);
   }
 }
 
@@ -802,8 +819,16 @@ static bool geocodePlace(const String& name) {
       float la, lo;
       if (jsonNumber(seg, "latitude", la) && jsonNumber(seg, "longitude", lo)) {
         geoLat = la; geoLon = lo;
-        if (!jsonString(seg, "name", weatherCity, sizeof(weatherCity)))
-          strlcpy(weatherCity, name.c_str(), sizeof(weatherCity));
+        // 도시명 (없으면 입력값), 앞에 광역시/도(admin1)가 있으면 "경상북도 경산"처럼 결합
+        char cityName[32] = "";
+        if (!jsonString(seg, "name", cityName, sizeof(cityName)))
+          strlcpy(cityName, name.c_str(), sizeof(cityName));
+        char admin1[24] = "";
+        if (jsonString(seg, "admin1", admin1, sizeof(admin1)) && admin1[0] &&
+            strcmp(admin1, cityName) != 0)
+          snprintf(weatherCity, sizeof(weatherCity), "%s %s", admin1, cityName);
+        else
+          strlcpy(weatherCity, cityName, sizeof(weatherCity));
         geoResolved = true;
         locManual = true;
         persistLocation();
