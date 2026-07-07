@@ -24,6 +24,7 @@
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
+#include "timefont.h"   // 대형 안티에일리어스 숫자 폰트 (시계용)
 
 // ================= 사용자 설정 =================
 static const char* TZ_INFO = "KST-9";            // 한국 표준시 (변경: https://gist.github.com/alwynallan/24d96091655391107939 참고)
@@ -387,10 +388,10 @@ static void renderClockFace(GFX& g,
   const int cx = w / 2;
   const int marginX = max(16, w / 16);
   const int barFullW = max(80, w - marginX * 2);
-  const int topY   = max(13, h * 8 / 100);
-  const int timeY  = h * 48 / 100;
-  const int barY   = h * 79 / 100;
-  const int statusY = h - 14;
+  const int topY   = max(14, h * 7 / 100);
+  const int timeY  = h * 45 / 100;
+  const int barY   = h * 75 / 100;
+  const int statusY = h - 15;
 
   drawThemedBackground(g, theme, w, h);
 
@@ -423,10 +424,13 @@ static void renderClockFace(GFX& g,
     g.drawString(weatherValid ? weatherLabel(weatherCode) : "불러오는 중", rightX, topY + 24);
   }
 
-  // ── 중앙: 시간 (안티에일리어스 고딕, 콜론은 숨쉬듯 깜빡임) ──
-  g.setFont(&fonts::lgfxJapanGothic_40);
+  // ── 중앙: 시간 (대형 안티에일리어스 숫자, 콜론은 숨쉬듯 깜빡임) ──
+  g.loadFont(timefont_vlw);
   int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
-  int x0 = cx - (wH + wC + wM) / 2;
+  int timeW = wH + wC + wM;
+  // 12시간제면 오른쪽 '오후' 라벨 폭(약 44px)까지 감안해 전체를 중앙 정렬
+  int ampmSpace = (use12h && timeValid) ? 46 : 0;
+  int x0 = cx - (timeW + ampmSpace) / 2;
   g.setTextDatum(textdatum_t::middle_left);
   g.setTextColor(TC(theme.fg));
   g.drawString(hh, x0, timeY);
@@ -434,14 +438,14 @@ static void renderClockFace(GFX& g,
   g.drawString(":", x0 + wH, timeY);
   g.setTextColor(TC(theme.fg));
   g.drawString(mm, x0 + wH + wC, timeY);
+  g.unloadFont();
 
-  // 오전/오후 (12시간제)
+  // 오전/오후 (12시간제) — 시간 오른쪽, 아래쪽 정렬
   if (use12h && timeValid) {
     g.setFont(&fonts::efontKR_16);
-    g.setTextDatum(textdatum_t::middle_left);
-    int ampmX = min(w - marginX - 40, x0 + wH + wC + wM + 12);
+    g.setTextDatum(textdatum_t::baseline_left);
     g.setTextColor(TC(theme.accent));
-    g.drawString(ampm, ampmX, timeY + 22);
+    g.drawString(ampm, x0 + timeW + 12, timeY + 22);
   }
 
   // ── 초 진행 바 ──
