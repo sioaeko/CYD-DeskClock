@@ -16,6 +16,8 @@
 #include <Preferences.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
 #include <time.h>
 #include <sys/time.h>
 #include <math.h>
@@ -137,6 +139,7 @@ static int16_t screenH = 240;
 
 static WiFiManager wm;
 static Preferences prefs;
+static WebServer server(80);
 static WiFiManagerParameter wifiHint(
   "<p style='font-size:13px;color:#666'>ESP32는 2.4GHz WiFi만 지원합니다. "
   "공유기가 WPA3-only이면 WPA2/WPA3 혼합 또는 WPA2로 바꿔 주세요.</p>");
@@ -159,6 +162,10 @@ static const Theme THEMES[] = {
   { "앰버", { 26, 13, 7 }, { 2, 1, 0 }, { 24, 14, 8 }, { 255, 244, 222 }, { 188, 160, 128 }, { 104, 78, 54 }, { 255, 170, 58 }, { 255, 91, 74 }, { 255, 222, 120 } },
   { "포레스트", { 5, 24, 22 }, { 0, 4, 3 }, { 8, 25, 22 }, { 232, 250, 242 }, { 137, 174, 160 }, { 72, 104, 92 }, { 74, 222, 128 }, { 56, 189, 248 }, { 250, 204, 21 } },
   { "모노", { 15, 16, 20 }, { 0, 0, 0 }, { 18, 19, 24 }, { 250, 250, 250 }, { 160, 164, 172 }, { 86, 90, 102 }, { 220, 224, 232 }, { 118, 128, 142 }, { 255, 214, 90 } },
+  { "오션", { 6, 16, 30 }, { 0, 2, 6 }, { 10, 20, 34 }, { 224, 242, 255 }, { 138, 164, 192 }, { 66, 90, 116 }, { 56, 160, 255 }, { 60, 220, 220 }, { 255, 209, 102 } },
+  { "선셋", { 28, 12, 20 }, { 4, 1, 4 }, { 28, 14, 22 }, { 255, 240, 238 }, { 196, 150, 158 }, { 112, 74, 84 }, { 255, 110, 130 }, { 255, 170, 90 }, { 255, 220, 140 } },
+  { "자수정", { 18, 12, 30 }, { 2, 0, 6 }, { 20, 15, 32 }, { 240, 236, 255 }, { 168, 156, 200 }, { 92, 80, 124 }, { 170, 130, 255 }, { 120, 200, 255 }, { 255, 214, 120 } },
+  { "로즈", { 26, 10, 16 }, { 4, 0, 3 }, { 28, 12, 18 }, { 255, 238, 244 }, { 198, 150, 166 }, { 112, 72, 88 }, { 255, 90, 140 }, { 255, 150, 180 }, { 255, 210, 130 } },
 };
 static const uint8_t THEME_COUNT = sizeof(THEMES) / sizeof(THEMES[0]);
 
@@ -537,6 +544,24 @@ static void updateBrightness() {
   }
 }
 
+// ================= 설정 적용 (터치 / 웹 공용) =================
+static void applyTheme(uint8_t i, bool toast) {
+  themeIndex = (uint8_t)(i % THEME_COUNT);
+  prefs.putUChar("theme", themeIndex);
+  if (toast) { char b[32]; snprintf(b, sizeof(b), "테마: %s", THEMES[themeIndex].name); showToast(b); }
+}
+static void applyBright(uint8_t m, bool toast) {
+  brightMode = (uint8_t)(m % 4);
+  prefs.putUChar("bmode", brightMode);
+  curBrightness = -1;  // 다음 루프에서 즉시 다시 계산
+  if (toast) { char b[32]; snprintf(b, sizeof(b), "밝기: %s", BRIGHT_NAME[brightMode]); showToast(b); }
+}
+static void applyUse12h(bool v, bool toast) {
+  use12h = v;
+  prefs.putBool("use12h", use12h);
+  if (toast) showToast(use12h ? "12시간제" : "24시간제");
+}
+
 // ================= 터치 =================
 static void handleTouch() {
   static bool     wasPressed = false;
@@ -566,21 +591,11 @@ static void handleTouch() {
     uint32_t held = nowMs - pressStart;
     if (held < 500) {                    // 짧은 탭
       if (pressX < screenW / 3) {
-        use12h = !use12h;
-        prefs.putBool("use12h", use12h);
-        showToast(use12h ? "12시간제" : "24시간제");
+        applyUse12h(!use12h, true);
       } else if (pressX < screenW * 2 / 3) {
-        themeIndex = (themeIndex + 1) % THEME_COUNT;
-        prefs.putUChar("theme", themeIndex);
-        char buf[32];
-        snprintf(buf, sizeof(buf), "테마: %s", THEMES[themeIndex].name);
-        showToast(buf);
+        applyTheme(themeIndex + 1, true);
       } else {
-        brightMode = (brightMode + 1) % 4;
-        prefs.putUChar("bmode", brightMode);
-        char buf[32];
-        snprintf(buf, sizeof(buf), "밝기: %s", BRIGHT_NAME[brightMode]);
-        showToast(buf);
+        applyBright(brightMode + 1, true);
       }
     } else {
       toastUntil = 0;                    // 길게 눌렀다 취소한 경우 토스트 제거
@@ -638,9 +653,9 @@ static bool connectWiFi() {
   drawScreen("CYD 데스크 시계", "WiFi 연결 중...", "2.4GHz 채널 1-13 지원");
   if (wm.autoConnect(AP_NAME)) {
     String ssidLine = WiFi.SSID();
-    String ipLine = WiFi.localIP().toString();
-    drawScreen("WiFi 연결됨", ssidLine.c_str(), ipLine.c_str());
-    delay(900);
+    String ipLine = "http://" + WiFi.localIP().toString();
+    drawScreen("WiFi 연결됨", ssidLine.c_str(), "설정: http://cyd-clock.local", ipLine.c_str());
+    delay(2500);
     return true;
   }
 
@@ -778,6 +793,93 @@ static void weatherTask(void*) {
   }
 }
 
+// ================= 웹 설정 페이지 =================
+// 같은 WiFi에서 http://cyd-clock.local (또는 기기 IP) 접속 시 테마/밝기/시간표시 변경.
+static const char CONTROL_PAGE[] PROGMEM = R"HTML(<!doctype html><html lang=ko><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>CYD 시계 설정</title>
+<style>
+:root{--bg:#0b0d12;--card:#151a23;--edge:#232a36;--text:#e9edf3;--muted:#95a0b2;--accent:#38d0ff}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif;line-height:1.5;padding:26px 16px 48px}
+.wrap{max-width:520px;margin:0 auto}
+h1{font-size:22px;font-weight:800;text-align:center}
+.sub{text-align:center;color:var(--muted);font-size:13px;margin:4px 0 22px}
+.sec{margin-top:26px}
+.sec>h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:12px}
+.themes{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.tc{border:2px solid var(--edge);border-radius:14px;overflow:hidden;cursor:pointer;background:var(--card);transition:border-color .15s,transform .08s}
+.tc:active{transform:scale(.98)}
+.tc.on{border-color:var(--accent)}
+.tc .pv{height:58px;display:flex;align-items:center;justify-content:center;position:relative;font-weight:800;font-size:20px;letter-spacing:1px;font-variant-numeric:tabular-nums}
+.tc .pv .dot{position:absolute;right:10px;bottom:8px;width:12px;height:12px;border-radius:50%}
+.tc .nm{padding:9px 12px;font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.tc .ck{color:var(--accent);opacity:0}
+.tc.on .ck{opacity:1}
+.seg{display:flex;gap:8px;flex-wrap:wrap}
+.seg button{flex:1;min-width:66px;padding:12px;border:1px solid var(--edge);background:var(--card);color:var(--muted);border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit}
+.seg button.on{border-color:var(--accent);color:var(--text);background:rgba(56,208,255,.12)}
+.foot{text-align:center;color:#5a6270;font-size:12px;margin-top:30px}
+</style></head><body><div class=wrap>
+<h1>CYD 데스크 시계</h1><div class=sub>같은 WiFi에서 실시간으로 조작하세요</div>
+<div class=sec><h2>테마</h2><div class=themes id=themes></div></div>
+<div class=sec><h2>밝기</h2><div class=seg id=bright></div></div>
+<div class=sec><h2>시간 표시</h2><div class=seg id=h12>
+<button data-h=0>24시간제</button><button data-h=1>12시간제</button></div></div>
+<div class=foot>변경은 즉시 시계에 적용되고 재부팅 후에도 유지됩니다</div>
+</div><script>
+let busy=0;
+async function load(){if(busy)return;const s=await(await fetch('/api/state')).json();render(s)}
+async function set(q){busy=1;const s=await(await fetch('/api/set?'+q)).json();render(s);busy=0}
+function render(S){
+ const T=document.getElementById('themes');T.innerHTML='';
+ S.themes.forEach((t,i)=>{const d=document.createElement('div');d.className='tc'+(i==S.theme?' on':'');
+  d.innerHTML=`<div class=pv style="background:${t.bg};color:${t.fg}">12:34<span class=dot style="background:${t.ac}"></span></div><div class=nm><span>${t.n}</span><span class=ck>&#10003;</span></div>`;
+  d.onclick=()=>set('theme='+i);T.appendChild(d)});
+ const B=document.getElementById('bright');B.innerHTML='';
+ S.brightNames.forEach((n,i)=>{const b=document.createElement('button');b.textContent=n;if(i==S.bright)b.className='on';b.onclick=()=>set('bright='+i);B.appendChild(b)});
+ document.querySelectorAll('#h12 button').forEach(b=>{b.classList.toggle('on',(+b.dataset.h)==S.h12);b.onclick=()=>set('h12='+b.dataset.h)});
+}
+load();setInterval(load,4000);
+</script></body></html>)HTML";
+
+static void handleRoot() {
+  server.send_P(200, "text/html; charset=utf-8", CONTROL_PAGE);
+}
+
+static void sendState() {
+  String j = "{\"theme\":" + String(themeIndex) +
+             ",\"bright\":" + String(brightMode) +
+             ",\"h12\":" + String(use12h ? 1 : 0) + ",\"brightNames\":[";
+  for (int i = 0; i < 4; i++) { if (i) j += ","; j += "\"" + String(BRIGHT_NAME[i]) + "\""; }
+  j += "],\"themes\":[";
+  for (int i = 0; i < THEME_COUNT; i++) {
+    char bg[8], fg[8], ac[8];
+    snprintf(bg, sizeof(bg), "#%02x%02x%02x", THEMES[i].bgTop[0], THEMES[i].bgTop[1], THEMES[i].bgTop[2]);
+    snprintf(fg, sizeof(fg), "#%02x%02x%02x", THEMES[i].fg[0], THEMES[i].fg[1], THEMES[i].fg[2]);
+    snprintf(ac, sizeof(ac), "#%02x%02x%02x", THEMES[i].accent[0], THEMES[i].accent[1], THEMES[i].accent[2]);
+    if (i) j += ",";
+    j += "{\"n\":\"" + String(THEMES[i].name) + "\",\"bg\":\"" + bg + "\",\"fg\":\"" + fg + "\",\"ac\":\"" + ac + "\"}";
+  }
+  j += "]}";
+  server.send(200, "application/json; charset=utf-8", j);
+}
+
+static void handleSet() {
+  if (server.hasArg("theme"))  applyTheme((uint8_t)server.arg("theme").toInt(), true);
+  if (server.hasArg("bright")) applyBright((uint8_t)server.arg("bright").toInt(), true);
+  if (server.hasArg("h12"))    applyUse12h(server.arg("h12").toInt() != 0, true);
+  sendState();
+}
+
+static void startWebServer() {
+  if (MDNS.begin(HOSTNAME)) MDNS.addService("http", "tcp", 80);
+  server.on("/", handleRoot);
+  server.on("/api/state", sendState);
+  server.on("/api/set", handleSet);
+  server.onNotFound(handleRoot);
+  server.begin();
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -824,10 +926,14 @@ void setup() {
   // 날씨 갱신을 백그라운드 코어에서 실행 (시계 렌더링이 끊기지 않도록)
   xTaskCreatePinnedToCore(weatherTask, "weather", 8192, nullptr, 1, nullptr, 0);
 
+  // 웹 설정 페이지 (http://cyd-clock.local)
+  startWebServer();
+
   lastSig[0] = '\0';
 }
 
 void loop() {
+  server.handleClient();
   handleTouch();
   maintainWiFi();
 
