@@ -266,7 +266,7 @@
           </div>
           <div class="time"><span id="pv-h">5</span><span class="colon">:</span><span id="pv-m">07</span><span class="ampm">오후</span></div>
           <div class="bar"><i id="pv-bar"></i></div>
-          <div class="status"><span><span class="wifi">◗</span> Seoul · 습도 58%</span><span>네온 · 최대</span></div>
+          <div class="status"><span><span class="wifi">◗</span> Seoul</span><span>습도 58%</span></div>
         </div>
         <div class="brand">CYD·CLOCK</div>
       </div>
@@ -278,7 +278,7 @@
     <h2>1분 설치</h2>
     <p class="desc">CYD를 USB로 연결하고 버튼을 누르면 끝. 앱도, 개발 환경도 필요 없습니다.</p>
 
-    <esp-web-install-button manifest="./manifest.json?v=1.2.0">
+    <esp-web-install-button manifest="./manifest.json?v=1.3.0">
       <button slot="activate" class="btn-flash">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         기기에 설치하기
@@ -307,7 +307,7 @@
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19a5 5 0 0 1-.5-9.98A6 6 0 0 1 19 8.5a4 4 0 0 1-.5 10.5z"/><path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2"/></svg></div>
         <b>날씨 · 기온 · 습도</b>
-        <p>Open-Meteo에서 현재 날씨를 받아 아이콘·기온·습도를 함께 보여줍니다. 위치는 자동, API 키도 필요 없습니다.</p>
+        <p>Open-Meteo에서 현재 날씨를 받아 아이콘·기온·습도를 보여줍니다. 위치는 IP로 자동, 또는 폰에서 도시를 직접 지정할 수 있습니다.</p>
       </div>
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></div>
@@ -322,7 +322,7 @@
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2.5"/><path d="M11 18h2"/></svg></div>
         <b>폰으로 실시간 설정</b>
-        <p>같은 WiFi에서 <kbd>cyd-clock.local</kbd>에 접속하면 테마·밝기·시간표시를 웹에서 바로 바꿉니다. 변경은 즉시 반영되고 저장됩니다.</p>
+        <p>같은 WiFi에서 <kbd>cyd-clock.local</kbd>에 접속하면 테마·밝기·시간표시·<b>지역</b>을 웹에서 바로 바꿉니다. 변경은 즉시 반영되고 저장됩니다.</p>
       </div>
       <div class="feature">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="m7 15-1.76-1.76a2 2 0 0 0-2.83 2.82l3.6 3.6C7.5 21.14 9.2 22 12 22h2a8 8 0 0 0 8-8V7a2 2 0 0 0-4 0v5"/></svg></div>
@@ -384,7 +384,7 @@
   </section>
 
   <footer>
-    CYD Desk Clock v1.2.0 · ESP Web Tools · 소스는 <code>src/main.cpp</code> · made with <span class="heart">Claude Fable 5</span>
+    CYD Desk Clock v1.3.0 · ESP Web Tools · 소스는 <code>src/main.cpp</code> · made with <span class="heart">Claude Fable 5</span>
   </footer>
 </div>
 

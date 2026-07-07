@@ -185,6 +185,8 @@ static volatile int   weatherCode  = -1;
 static char           weatherCity[24] = "";
 static float          geoLat = 0.0f, geoLon = 0.0f;
 static bool           geoResolved = false;
+static volatile bool  weatherRefresh = false;   // 위치 변경 시 즉시 갱신 요청
+static bool           locManual = false;         // true=사용자 지정 위치, false=IP 자동
 
 // 색상 (RGB888)
 static inline uint32_t C(uint8_t r, uint8_t g, uint8_t b) { return lgfx::color888(r, g, b); }
@@ -365,10 +367,10 @@ static void renderClockFace(GFX& g,
   const int cx = w / 2;
   const int marginX = max(16, w / 16);
   const int barFullW = max(80, w - marginX * 2);
-  const int topY   = max(14, h * 9 / 100);
+  const int topY   = max(13, h * 8 / 100);
   const int timeY  = h * 48 / 100;
-  const int barY   = h * 80 / 100;
-  const int statusY = h - 16;
+  const int barY   = h * 79 / 100;
+  const int statusY = h - 14;
 
   drawThemedBackground(g, theme, w, h);
 
@@ -378,7 +380,7 @@ static void renderClockFace(GFX& g,
   g.setTextColor(TC(theme.muted));
   g.drawString(dateStr, marginX, topY);
 
-  // ── 상단 우: 날씨(아이콘 + 기온), 그 아래 날씨 설명 ──
+  // ── 상단 우: 날씨(아이콘 + 기온) ── (설명/습도는 하단 우측에)
   {
     char tempStr[10];
     if (weatherValid) snprintf(tempStr, sizeof(tempStr), "%d", (int)lroundf(weatherTemp));
@@ -394,10 +396,11 @@ static void renderClockFace(GFX& g,
     g.drawCircle(rightX - degR, topY - 8, degR, TC(theme.fg));   // 도(°) 기호
     drawWeatherIcon(g, tempRight - tw - 16, topY, weatherValid ? weatherCode : -1, theme);
 
+    // 날씨 설명 (기온 아래, 우측 정렬)
     g.setFont(&fonts::efontKR_16);
     g.setTextDatum(textdatum_t::middle_right);
     g.setTextColor(TC(theme.muted));
-    g.drawString(weatherValid ? weatherLabel(weatherCode) : "날씨 불러오는 중", rightX, topY + 22);
+    g.drawString(weatherValid ? weatherLabel(weatherCode) : "불러오는 중", rightX, topY + 24);
   }
 
   // ── 중앙: 시간 (콜론은 숨쉬듯 깜빡임) ──
@@ -481,25 +484,25 @@ static void drawClockFrame() {
       snprintf(hh, sizeof(hh), "%02d", hour);
     }
     snprintf(mm, sizeof(mm), "%02d", t.tm_min);
-    snprintf(dateStr, sizeof(dateStr), "%d년 %d월 %d일 %s",
-             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, WEEKDAY_KR[t.tm_wday]);
+    snprintf(dateStr, sizeof(dateStr), "%d월 %d일 %s",
+             t.tm_mon + 1, t.tm_mday, WEEKDAY_KR[t.tm_wday]);   // 연도 생략 — 여백 확보
   } else {
     strcpy(hh, "--"); strcpy(mm, "--");
     strcpy(dateStr, "시간 동기화 대기 중");
   }
 
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
-  // 하단 좌: 날씨가 있으면 도시·습도, 없으면 WiFi 상태
-  if (weatherValid) {
-    if (weatherCity[0]) snprintf(statusL, sizeof(statusL), "%s · 습도 %d%%", weatherCity, weatherHum);
-    else                snprintf(statusL, sizeof(statusL), "습도 %d%%", weatherHum);
+  // 하단 좌: 도시(없으면 WiFi 상태)
+  if (weatherValid && weatherCity[0]) {
+    snprintf(statusL, sizeof(statusL), "%s", weatherCity);
   } else if (wifiOk) {
     snprintf(statusL, sizeof(statusL), "WiFi %ddBm", WiFi.RSSI());
   } else {
     snprintf(statusL, sizeof(statusL), "WiFi 재연결");
   }
-  // 하단 우: 테마 · 밝기 모드
-  snprintf(statusR, sizeof(statusR), "%s · %s", THEMES[themeIndex % THEME_COUNT].name, BRIGHT_NAME[brightMode]);
+  // 하단 우: 습도 (없으면 빈칸)
+  if (weatherValid) snprintf(statusR, sizeof(statusR), "습도 %d%%", weatherHum);
+  else              statusR[0] = '\0';
 
   bool colonOn = (subMs < 600);
   int  barW    = timeValid ? (int)((t.tm_sec * 1000 + subMs) * (long)barFullW / 60000L) : 0;
@@ -727,6 +730,70 @@ static bool jsonString(const String& body, const char* key, char* out, size_t n)
   return true;
 }
 
+// URL 쿼리용 퍼센트 인코딩 (한글/공백 포함 도시명 검색용).
+static String urlEncode(const String& s) {
+  static const char* hex = "0123456789ABCDEF";
+  String out;
+  for (size_t i = 0; i < s.length(); i++) {
+    uint8_t c = (uint8_t)s[i];
+    if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+        c == '-' || c == '_' || c == '.' || c == '~') {
+      out += (char)c;
+    } else {
+      out += '%'; out += hex[c >> 4]; out += hex[c & 0x0F];
+    }
+  }
+  return out;
+}
+
+static void persistLocation() {
+  prefs.putBool("locman", locManual);
+  if (locManual) {
+    prefs.putFloat("lat", geoLat);
+    prefs.putFloat("lon", geoLon);
+    prefs.putString("city", weatherCity);
+  }
+}
+
+// 도시 이름 → 좌표 (Open-Meteo 지오코딩, 무료·키 불필요). 성공 시 수동 위치로 저장.
+static bool geocodePlace(const String& name) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setConnectTimeout(10000);
+  http.setTimeout(10000);
+  String url = "https://geocoding-api.open-meteo.com/v1/search?count=1&language=ko&name=" + urlEncode(name);
+  if (!http.begin(client, url)) return false;
+  bool ok = false;
+  if (http.GET() == 200) {
+    String body = http.getString();
+    int ri = body.indexOf("\"results\"");
+    if (ri >= 0) {
+      String seg = body.substring(ri);
+      float la, lo;
+      if (jsonNumber(seg, "latitude", la) && jsonNumber(seg, "longitude", lo)) {
+        geoLat = la; geoLon = lo;
+        if (!jsonString(seg, "name", weatherCity, sizeof(weatherCity)))
+          strlcpy(weatherCity, name.c_str(), sizeof(weatherCity));
+        geoResolved = true;
+        locManual = true;
+        persistLocation();
+        ok = true;
+      }
+    }
+  }
+  http.end();
+  return ok;
+}
+
+// 자동(IP) 위치로 복귀.
+static void resetToAutoLocation() {
+  locManual = false;
+  geoResolved = false;
+  weatherCity[0] = '\0';
+  prefs.putBool("locman", false);
+}
+
 // 위치 결정: 수동 좌표가 있으면 사용, 없으면 IP 기반(ip-api.com, 무료·HTTP)으로 1회 조회.
 static bool resolveLocation() {
   if (geoResolved) return true;
@@ -785,11 +852,20 @@ static void fetchWeather() {
 }
 
 // 백그라운드 태스크(코어 0): 시계 렌더링(코어 1)을 막지 않고 주기적으로 갱신.
+// 평소엔 주기적으로, 지역이 바뀌면(weatherRefresh) 즉시 갱신.
 static void weatherTask(void*) {
   vTaskDelay(pdMS_TO_TICKS(2500));
+  uint32_t lastFetch = 0;
   for (;;) {
-    if (WiFi.status() == WL_CONNECTED) fetchWeather();
-    vTaskDelay(pdMS_TO_TICKS(weatherValid ? 15UL * 60UL * 1000UL : 60UL * 1000UL));
+    uint32_t nowMs = millis();
+    uint32_t interval = weatherValid ? 15UL * 60UL * 1000UL : 60UL * 1000UL;
+    bool due = (lastFetch == 0) || (nowMs - lastFetch >= interval);
+    if (WiFi.status() == WL_CONNECTED && (due || weatherRefresh)) {
+      weatherRefresh = false;
+      fetchWeather();
+      lastFetch = millis();
+    }
+    vTaskDelay(pdMS_TO_TICKS(400));
   }
 }
 
@@ -818,6 +894,14 @@ h1{font-size:22px;font-weight:800;text-align:center}
 .seg{display:flex;gap:8px;flex-wrap:wrap}
 .seg button{flex:1;min-width:66px;padding:12px;border:1px solid var(--edge);background:var(--card);color:var(--muted);border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit}
 .seg button.on{border-color:var(--accent);color:var(--text);background:rgba(56,208,255,.12)}
+.loc{display:flex;gap:8px}
+.loc input{flex:1;min-width:0;padding:12px 14px;border:1px solid var(--edge);background:#0d1219;color:var(--text);border-radius:12px;font-size:15px;font-family:inherit}
+.loc input::placeholder{color:#5f6a7a}
+.loc input:focus{outline:none;border-color:var(--accent)}
+.loc button,.locrow button{padding:12px 18px;border:none;background:var(--accent);color:#04141c;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit}
+.locrow{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.locrow .cur{color:var(--muted);font-size:14px}
+.locrow button.ghost{background:transparent;border:1px solid var(--edge);color:var(--muted);font-weight:600;padding:8px 14px}
 .foot{text-align:center;color:#5a6270;font-size:12px;margin-top:30px}
 </style></head><body><div class=wrap>
 <h1>CYD 데스크 시계</h1><div class=sub>같은 WiFi에서 실시간으로 조작하세요</div>
@@ -825,6 +909,10 @@ h1{font-size:22px;font-weight:800;text-align:center}
 <div class=sec><h2>밝기</h2><div class=seg id=bright></div></div>
 <div class=sec><h2>시간 표시</h2><div class=seg id=h12>
 <button data-h=0>24시간제</button><button data-h=1>12시간제</button></div></div>
+<div class=sec><h2>지역 (날씨)</h2>
+<div class=loc><input id=place placeholder="도시 이름 (예: 서울, 부산, Tokyo)" autocomplete=off><button id=applyloc>적용</button></div>
+<div class=locrow><span class=cur id=curloc>—</span><button class=ghost id=autoloc>자동(IP)</button></div>
+</div>
 <div class=foot>변경은 즉시 시계에 적용되고 재부팅 후에도 유지됩니다</div>
 </div><script>
 let busy=0;
@@ -838,7 +926,12 @@ function render(S){
  const B=document.getElementById('bright');B.innerHTML='';
  S.brightNames.forEach((n,i)=>{const b=document.createElement('button');b.textContent=n;if(i==S.bright)b.className='on';b.onclick=()=>set('bright='+i);B.appendChild(b)});
  document.querySelectorAll('#h12 button').forEach(b=>{b.classList.toggle('on',(+b.dataset.h)==S.h12);b.onclick=()=>set('h12='+b.dataset.h)});
+ document.getElementById('curloc').textContent=S.city?('현재: '+S.city+(S.auto?' · 자동':' · 지정')):(S.auto?'자동(IP)으로 감지 중':'—');
 }
+function applyPlace(){const v=document.getElementById('place').value.trim();if(v){document.getElementById('curloc').textContent='검색 중…';set('place='+encodeURIComponent(v));document.getElementById('place').value=''}}
+document.getElementById('applyloc').onclick=applyPlace;
+document.getElementById('place').addEventListener('keydown',e=>{if(e.key==='Enter')applyPlace()});
+document.getElementById('autoloc').onclick=()=>set('autoloc=1');
 load();setInterval(load,4000);
 </script></body></html>)HTML";
 
@@ -860,7 +953,7 @@ static void sendState() {
     if (i) j += ",";
     j += "{\"n\":\"" + String(THEMES[i].name) + "\",\"bg\":\"" + bg + "\",\"fg\":\"" + fg + "\",\"ac\":\"" + ac + "\"}";
   }
-  j += "]}";
+  j += "],\"city\":\"" + String(weatherCity) + "\",\"auto\":" + String(locManual ? 0 : 1) + "}";
   server.send(200, "application/json; charset=utf-8", j);
 }
 
@@ -868,6 +961,22 @@ static void handleSet() {
   if (server.hasArg("theme"))  applyTheme((uint8_t)server.arg("theme").toInt(), true);
   if (server.hasArg("bright")) applyBright((uint8_t)server.arg("bright").toInt(), true);
   if (server.hasArg("h12"))    applyUse12h(server.arg("h12").toInt() != 0, true);
+  if (server.hasArg("place")) {
+    String p = server.arg("place"); p.trim();
+    if (p.length()) {
+      if (geocodePlace(p)) {
+        weatherValid = false; weatherRefresh = true;
+        char b[48]; snprintf(b, sizeof(b), "지역: %s", weatherCity); showToast(b);
+      } else {
+        showToast("지역을 찾지 못했습니다");
+      }
+    }
+  }
+  if (server.hasArg("autoloc")) {
+    resetToAutoLocation();
+    weatherValid = false; weatherRefresh = true;
+    showToast("지역: 자동(IP)");
+  }
   sendState();
 }
 
@@ -905,6 +1014,16 @@ void setup() {
   use12h     = prefs.getBool("use12h", false);
   brightMode = prefs.getUChar("bmode", 0) % 4;
   themeIndex = prefs.getUChar("theme", 0) % THEME_COUNT;
+
+  // 저장된 지역(수동 위치) 복원
+  locManual = prefs.getBool("locman", false);
+  if (locManual) {
+    geoLat = prefs.getFloat("lat", 0.0f);
+    geoLon = prefs.getFloat("lon", 0.0f);
+    String c = prefs.getString("city", "");
+    strlcpy(weatherCity, c.c_str(), sizeof(weatherCity));
+    geoResolved = (geoLat != 0.0f || geoLon != 0.0f);
+  }
 
   drawScreen("CYD 데스크 시계", "WiFi 연결 중...");
 
