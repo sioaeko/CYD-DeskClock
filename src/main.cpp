@@ -252,10 +252,10 @@ static const char* weatherLabel(int code) {
 
 template <typename GFX>
 static void drawDropIcon(GFX& g, int cx, int cy, uint32_t col) {
-  // 물방울(습도) 아이콘
-  g.fillCircle(cx, cy + 3, 5, col);
-  g.fillTriangle(cx, cy - 7, cx - 5, cy + 3, cx + 5, cy + 3, col);
-  g.fillCircle(cx - 2, cy + 1, 1, C(255, 255, 255));  // 작은 하이라이트
+  // 물방울(습도) 아이콘 (작게)
+  g.fillCircle(cx, cy + 2, 4, col);
+  g.fillTriangle(cx, cy - 5, cx - 4, cy + 2, cx + 4, cy + 2, col);
+  g.fillCircle(cx - 1, cy + 1, 1, C(255, 255, 255));  // 작은 하이라이트
 }
 
 template <typename GFX>
@@ -396,8 +396,8 @@ static void renderClockFace(GFX& g,
   const int marginX = max(20, w / 13);         // 가장자리 여백 (데모처럼 살짝 띄움)
   const int timeMargin = max(14, w / 22);      // 큰 시간은 더 넓게 써도 됨
   const int barFullW = max(80, w - marginX * 2);
-  const int topY    = max(18, h * 9 / 100);    // 상단 첫 줄
-  const int top2Y   = topY + 27;               // 상단 둘째 줄 (날씨 설명)
+  const int topY    = max(16, h * 8 / 100);    // 상단 첫 줄
+  const int top2Y   = topY + 21;               // 상단 둘째 줄 (날씨 설명)
   const int timeY   = h * 46 / 100;            // 큰 시간 세로 중심
   const int barY    = h * 74 / 100;
   const int statusY = h - 16;
@@ -408,7 +408,7 @@ static void renderClockFace(GFX& g,
   g.loadFont(timefont_vlw);
   int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
   int timeW = wH + wC + wM;
-  int ampmSpace = (use12h && timeValid) ? 60 : 0;   // 오른쪽 '오후' 라벨 공간
+  int ampmSpace = (use12h && timeValid) ? 48 : 0;   // 오른쪽 '오후' 라벨 공간
   int x0 = cx - (timeW + ampmSpace) / 2;
   x0 = constrain(x0, timeMargin, w - timeMargin - timeW - ampmSpace);
   const int timeBaseline = timeY + 27;              // 시간 글자 밑선(baseline, 78px 기준)
@@ -435,15 +435,14 @@ static void renderClockFace(GFX& g,
     if (weatherValid) snprintf(tempStr, sizeof(tempStr), "%d", (int)lroundf(weatherTemp));
     else              strcpy(tempStr, "--");
     const int rightX = w - marginX;
-    const int degR = 4;
+    const int degR = 3;
     int tw = g.textWidth(tempStr);
-    int tempRight = rightX - (degR * 2 + 3);
+    int tempRight = rightX - (degR * 2 + 2);
     g.setTextDatum(textdatum_t::middle_right);
     g.setTextColor(TC(theme.fg));
     g.drawString(tempStr, tempRight, topY);
-    g.drawCircle(rightX - degR, topY - 8, degR, TC(theme.fg));            // 도(°)
-    g.drawCircle(rightX - degR, topY - 8, degR - 1, TC(theme.fg));
-    drawWeatherIcon(g, tempRight - tw - 20, topY, weatherValid ? weatherCode : -1, theme);
+    g.drawCircle(rightX - degR, topY - 6, degR, TC(theme.fg));            // 도(°)
+    drawWeatherIcon(g, tempRight - tw - 16, topY, weatherValid ? weatherCode : -1, theme);
     g.setTextDatum(textdatum_t::middle_right);
     g.setTextColor(TC(theme.muted));
     g.drawString(weatherValid ? weatherLabel(weatherCode) : "불러오는 중", rightX, top2Y);
@@ -462,7 +461,7 @@ static void renderClockFace(GFX& g,
     g.setTextColor(TC(theme.muted));
     int hw = g.textWidth(statusR);
     g.drawString(statusR, w - marginX, statusY);
-    drawDropIcon(g, w - marginX - hw - 11, statusY, TC(theme.accent2));
+    drawDropIcon(g, w - marginX - hw - 9, statusY, TC(theme.accent2));
   }
   g.unloadFont();
 
