@@ -24,8 +24,9 @@
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
-#include "timefont.h"    // 대형 안티에일리어스 숫자 폰트 (시계용)
-#include "labelfont.h"   // 안티에일리어스 한글/숫자 라벨 폰트 (날짜·날씨·습도)
+#include "timefont.h"    // Cascadia Mono SemiBold 96px (시간)
+#include "datafont.h"    // Cascadia Mono Medium 30px (기온)
+#include "labelfont.h"   // Noto Sans KR Medium 17px (날짜·날씨)
 
 // ================= 사용자 설정 =================
 static const char* TZ_INFO = "KST-9";            // 한국 표준시 (변경: https://gist.github.com/alwynallan/24d96091655391107939 참고)
@@ -280,11 +281,11 @@ static void drawSun(GFX& g, int x, int y, int r, uint32_t col) {
 // WMO 날씨 코드를 아이콘으로. code < 0 이면 아직 데이터 없음.
 template <typename GFX>
 static void drawWeatherIcon(GFX& g, int x, int y, int code, const Theme& theme) {
-  const uint32_t sun   = C(255, 200, 60);
-  const uint32_t cloud = C(205, 214, 228);
+  const uint32_t sun   = TC(theme.warn);
+  const uint32_t cloud = TC(theme.muted);
   const uint32_t rain  = TC(theme.accent);
-  const uint32_t snow  = C(225, 238, 255);
-  const uint32_t bolt  = C(255, 210, 70);
+  const uint32_t snow  = TC(theme.fg);
+  const uint32_t bolt  = TC(theme.warn);
   if (code < 0) { g.drawCircle(x, y, 9, TC(theme.faint)); return; }
 
   int cat;
@@ -382,8 +383,6 @@ static void renderClockFace(GFX& g,
                             const char* hh,
                             const char* mm,
                             const char* ampm,
-                            const char* statusL,
-                            const char* statusR,
                             bool timeValid,
                             bool colonOn,
                             int barW,
@@ -393,100 +392,118 @@ static void renderClockFace(GFX& g,
   const int w = screenW;
   const int h = screenH;
   const int cx = w / 2;
-  const int marginX = max(20, w / 13);         // 가장자리 여백 (데모처럼 살짝 띄움)
-  const int timeMargin = max(14, w / 22);      // 큰 시간은 더 넓게 써도 됨
+  const int marginX = max(18, w / 16);
   const int barFullW = max(80, w - marginX * 2);
-  const int topY    = max(16, h * 8 / 100);    // 상단 첫 줄
-  const int top2Y   = topY + 21;               // 상단 둘째 줄 (날씨 설명)
-  const int timeY   = h * 46 / 100;            // 큰 시간 세로 중심
-  const int barY    = h * 74 / 100;
-  const int statusY = h - 16;
+  const int headerY = h * 9 / 100;
+  const int ruleY = h * 18 / 100;
+  const int timeBaseline = h * 56 / 100;
+  const int timelineY = h * 63 / 100;
+  const int weatherTop = h * 72 / 100;
+  const int weatherCenterY = h * 80 / 100;
+  const int weatherBottomY = h * 87 / 100;
 
   drawThemedBackground(g, theme, w, h);
 
-  // ── 중앙: 큰 시간 (콜론은 숨쉬듯 깜빡임) ──
+  // Top utility rail: date at left, connection state at right.
+  uint32_t wifiColor = wifiOk ? TC(theme.accent2) : TC(theme.warn);
+  drawWifiIcon(g, w - marginX - 5, headerY + 3, wifiColor);
+  if (!wifiOk) {
+    g.drawLine(w - marginX - 16, headerY - 7,
+               w - marginX + 3, headerY + 10, wifiColor);
+  }
+  g.drawFastHLine(marginX, ruleY, barFullW, TC(theme.faint));
+
+  // The time is the visual anchor. A custom colon keeps spacing compact and stable.
   g.loadFont(timefont_vlw);
-  int wH = g.textWidth(hh), wC = g.textWidth(":"), wM = g.textWidth(mm);
-  int timeW = wH + wC + wM;
-  int ampmSpace = (use12h && timeValid) ? 48 : 0;   // 오른쪽 '오후' 라벨 공간
-  int x0 = cx - (timeW + ampmSpace) / 2;
-  x0 = constrain(x0, timeMargin, w - timeMargin - timeW - ampmSpace);
-  const int timeBaseline = timeY + 27;              // 시간 글자 밑선(baseline, 78px 기준)
-  g.setTextDatum(textdatum_t::middle_left);
+  int wH = g.textWidth(hh);
+  int wM = g.textWidth(mm);
+  const int colonGap = max(18, w / 16);
+  int timeW = wH + colonGap + wM;
+  int x0 = cx - timeW / 2;
+  g.setTextDatum(textdatum_t::baseline_left);
   g.setTextColor(TC(theme.fg));
-  g.drawString(hh, x0, timeY);
-  g.setTextColor(colonOn ? TC(theme.fg) : TC(theme.faint));
-  g.drawString(":", x0 + wH, timeY);
-  g.setTextColor(TC(theme.fg));
-  g.drawString(mm, x0 + wH + wC, timeY);
+  g.drawString(hh, x0, timeBaseline);
+  g.drawString(mm, x0 + wH + colonGap, timeBaseline);
   g.unloadFont();
 
-  // ── 라벨(날짜·날씨·오후·습도)은 안티에일리어스 한글 폰트로 ──
-  g.loadFont(labelfont_vlw);
+  uint32_t colonColor = colonOn ? TC(theme.accent) : TC(theme.faint);
+  const int colonX = x0 + wH + colonGap / 2;
+  const int colonRadius = max(3, w / 80);
+  g.fillCircle(colonX, timeBaseline - h * 18 / 100, colonRadius, colonColor);
+  g.fillCircle(colonX, timeBaseline - h * 6 / 100, colonRadius, colonColor);
 
-  // 상단 좌: 날짜
-  g.setTextDatum(textdatum_t::middle_left);
-  g.setTextColor(TC(theme.muted));
-  g.drawString(dateStr, marginX, topY);
-
-  // 상단 우: 날씨 아이콘 + 기온, 그 아래 설명
-  {
-    char tempStr[8];
-    if (weatherValid) snprintf(tempStr, sizeof(tempStr), "%d", (int)lroundf(weatherTemp));
-    else              strcpy(tempStr, "--");
-    const int rightX = w - marginX;
-    const int degR = 3;
-    int tw = g.textWidth(tempStr);
-    int tempRight = rightX - (degR * 2 + 2);
-    g.setTextDatum(textdatum_t::middle_right);
-    g.setTextColor(TC(theme.fg));
-    g.drawString(tempStr, tempRight, topY);
-    g.drawCircle(rightX - degR, topY - 6, degR, TC(theme.fg));            // 도(°)
-    drawWeatherIcon(g, tempRight - tw - 16, topY, weatherValid ? weatherCode : -1, theme);
-    g.setTextDatum(textdatum_t::middle_right);
-    g.setTextColor(TC(theme.muted));
-    g.drawString(weatherValid ? weatherLabel(weatherCode) : "불러오는 중", rightX, top2Y);
-  }
-
-  // 오전/오후 (12시간제) — 시간 밑선에 맞춰 오른쪽에
-  if (use12h && timeValid) {
-    g.setTextDatum(textdatum_t::baseline_left);
-    g.setTextColor(TC(theme.accent));
-    g.drawString(ampm, x0 + timeW + 14, timeBaseline);
-  }
-
-  // 하단 우: 물방울 + 습도
-  if (!toastOn && statusR[0]) {
-    g.setTextDatum(textdatum_t::middle_right);
-    g.setTextColor(TC(theme.muted));
-    int hw = g.textWidth(statusR);
-    g.drawString(statusR, w - marginX, statusY);
-    drawDropIcon(g, w - marginX - hw - 9, statusY, TC(theme.accent2));
-  }
-  g.unloadFont();
-
-  // ── 초 진행 바 ──
+  // A two-pixel timeline replaces the old heavy progress bar.
   int safeBarW = constrain(barW, 0, barFullW);
-  g.fillRoundRect(marginX, barY, barFullW, 6, 3, TC(theme.faint));
+  g.fillRect(marginX, timelineY, barFullW, 2, TC(theme.faint));
   if (safeBarW > 0) {
-    if (safeBarW > 6) g.fillRoundRect(marginX, barY, safeBarW, 6, 3, TC(theme.accent));
-    else              g.fillRect(marginX, barY, safeBarW, 6, TC(theme.accent));
-    g.fillCircle(marginX + safeBarW, barY + 3, 3, TC(theme.accent2));
+    g.fillRect(marginX, timelineY, safeBarW, 2, TC(theme.accent));
+    int dotX = min(marginX + safeBarW, marginX + barFullW - 1);
+    g.fillCircle(dotX, timelineY + 1, 3, TC(theme.accent2));
   }
 
-  // ── 하단 좌: 지역(임의 한글이라 비트맵 폰트) / 토스트 ──
-  g.setFont(&fonts::efontKR_16);
+  // Toasts temporarily take over the lower information strip.
   if (toastOn) {
-    g.setTextDatum(textdatum_t::middle_center);
-    int toastW = min(w - marginX * 2, g.textWidth(toastMsg) + 22);
-    g.fillRoundRect(cx - toastW / 2, statusY - 13, toastW, 25, 8, TC(theme.panel));
-    g.setTextColor(TC(theme.warn));
-    g.drawString(toastMsg, cx, statusY);
-  } else {
+    const int toastY = h * 82 / 100;
+    g.loadFont(labelfont_vlw);
     g.setTextDatum(textdatum_t::middle_left);
     g.setTextColor(TC(theme.muted));
-    g.drawString(statusL, marginX, statusY);
+    g.drawString(dateStr, marginX, headerY);
+    if (use12h && timeValid) {
+      g.setTextColor(TC(theme.accent));
+      g.drawString(ampm, x0, ruleY + 13);
+    }
+    g.unloadFont();
+
+    g.setFont(&fonts::efontKR_16);
+    g.setTextDatum(textdatum_t::middle_center);
+    int toastW = min(w - marginX * 2, g.textWidth(toastMsg) + 22);
+    g.fillRoundRect(cx - toastW / 2, toastY - 16, toastW, 32, 6, TC(theme.panel));
+    g.fillRect(cx - toastW / 2, toastY - 16, 3, 32, TC(theme.accent));
+    g.setTextColor(TC(theme.warn));
+    g.drawString(toastMsg, cx, toastY);
+    return;
   }
+
+  // Lower weather strip: icon and temperature on the left, details on the right.
+  const int splitX = marginX + 100;
+  const int iconX = marginX + 10;
+  drawWeatherIcon(g, iconX, weatherCenterY, weatherValid ? weatherCode : -1, theme);
+
+  char tempStr[8];
+  if (weatherValid) snprintf(tempStr, sizeof(tempStr), "%d", (int)lroundf(weatherTemp));
+  else              strcpy(tempStr, "--");
+  g.loadFont(datafont_vlw);
+  g.setTextDatum(textdatum_t::baseline_left);
+  g.setTextColor(TC(theme.fg));
+  const int tempX = marginX + 32;
+  const int tempBaseline = weatherBottomY + 3;
+  g.drawString(tempStr, tempX, tempBaseline);
+  int tempW = g.textWidth(tempStr);
+  g.unloadFont();
+  g.drawCircle(tempX + tempW + 4, tempBaseline - 25, 3, TC(theme.fg));
+
+  g.drawFastVLine(splitX, weatherTop, h - marginX - weatherTop, TC(theme.faint));
+
+  g.loadFont(labelfont_vlw);
+  g.setTextDatum(textdatum_t::middle_left);
+  g.setTextColor(TC(theme.muted));
+  g.drawString(dateStr, marginX, headerY);
+  if (use12h && timeValid) {
+    g.setTextColor(TC(theme.accent));
+    g.drawString(ampm, x0, ruleY + 13);
+  }
+
+  g.setTextColor(TC(theme.fg));
+  g.drawString(weatherValid ? weatherLabel(weatherCode) : "불러오는 중",
+               splitX + 16, weatherTop + 9);
+
+  char humidityStr[12];
+  if (weatherValid) snprintf(humidityStr, sizeof(humidityStr), "%d%%", weatherHum);
+  else              strcpy(humidityStr, "--%");
+  drawDropIcon(g, splitX + 20, weatherBottomY, TC(theme.accent2));
+  g.setTextColor(TC(theme.muted));
+  g.drawString(humidityStr, splitX + 32, weatherBottomY);
+  g.unloadFont();
 }
 
 // ================= 메인 화면 =================
@@ -506,37 +523,26 @@ static void drawClockFrame() {
   int subMs = tv.tv_usec / 1000;
 
   // --- 표시 내용 구성 ---
-  char hh[4], mm[4], dateStr[64], statusL[40], statusR[40];
+  char hh[4], mm[4], dateStr[64];
   const char* ampm = "";
   if (timeValid) {
     int hour = t.tm_hour;
     if (use12h) {
       ampm = (hour < 12) ? "오전" : "오후";
       hour = hour % 12; if (hour == 0) hour = 12;
-      snprintf(hh, sizeof(hh), "%d", hour);
+      snprintf(hh, sizeof(hh), "%02d", hour);
     } else {
       snprintf(hh, sizeof(hh), "%02d", hour);
     }
     snprintf(mm, sizeof(mm), "%02d", t.tm_min);
-    snprintf(dateStr, sizeof(dateStr), "%d월 %d일 %s",
-             t.tm_mon + 1, t.tm_mday, WEEKDAY_KR[t.tm_wday]);   // 연도 생략 — 여백 확보
+    snprintf(dateStr, sizeof(dateStr), "%d월 %d일 · %s",
+             t.tm_mon + 1, t.tm_mday, WEEKDAY_KR[t.tm_wday]);
   } else {
     strcpy(hh, "--"); strcpy(mm, "--");
     strcpy(dateStr, "시간 동기화 대기 중");
   }
 
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
-  // 하단 좌: 도시(없으면 WiFi 상태)
-  if (weatherValid && weatherCity[0]) {
-    snprintf(statusL, sizeof(statusL), "%s", weatherCity);
-  } else if (wifiOk) {
-    snprintf(statusL, sizeof(statusL), "WiFi %ddBm", WiFi.RSSI());
-  } else {
-    snprintf(statusL, sizeof(statusL), "WiFi 재연결");
-  }
-  // 하단 우: 습도 (없으면 빈칸)
-  if (weatherValid) snprintf(statusR, sizeof(statusR), "습도 %d%%", weatherHum);
-  else              statusR[0] = '\0';
 
   bool colonOn = (subMs < 600);
   int  barW    = timeValid ? (int)((t.tm_sec * 1000 + subMs) * (long)barFullW / 60000L) : 0;
@@ -544,19 +550,19 @@ static void drawClockFrame() {
 
   // 바뀐 게 없으면 다시 그리지 않음
   char sig[320];
-  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%s|%s|%d|%s|%d|%d|%d|%d|%d|%d|%d|%d|%d",
-           hh, mm, colonOn, barW, dateStr, statusL, statusR, wifiOk, toastOn ? toastMsg : "", (int)use12h, themeIndex, w, h,
+  snprintf(sig, sizeof(sig), "%s:%s|%d|%d|%s|%d|%s|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+           hh, mm, colonOn, barW, dateStr, wifiOk, toastOn ? toastMsg : "", (int)use12h, themeIndex, w, h,
            (int)weatherValid, (int)lroundf(weatherTemp), weatherHum, weatherCode, (int)nightActive());
   if (strcmp(sig, lastSig) == 0) return;
   strlcpy(lastSig, sig, sizeof(lastSig));
 
   if (canvasOk) {
-    renderClockFace(canvas, dateStr, hh, mm, ampm, statusL, statusR,
+    renderClockFace(canvas, dateStr, hh, mm, ampm,
                     timeValid, colonOn, barW, wifiOk, toastOn);
     canvas.pushSprite(0, 0);
   } else {
     tft.fillScreen(C(0, 0, 0));
-    renderClockFace(tft, dateStr, hh, mm, ampm, statusL, statusR,
+    renderClockFace(tft, dateStr, hh, mm, ampm,
                     timeValid, colonOn, barW, wifiOk, toastOn);
   }
 }
